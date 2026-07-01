@@ -151,6 +151,10 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return this.storage;
 	}
 
+	async cleanup(): Promise<void> {
+		await this.storage.cleanup();
+	}
+
 	getLeafId(): Promise<string | null> {
 		return this.storage.getLeafId();
 	}
@@ -325,6 +329,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
 		}
 		await this.storage.setLeafId(entryId);
+		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
+			await this.sqliteStorage.setLeafId(entryId);
+		}
 		if (!summary) return undefined;
 		return this.appendTypedEntry({
 			type: "branch_summary",
