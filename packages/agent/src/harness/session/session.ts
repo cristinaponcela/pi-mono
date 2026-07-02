@@ -138,11 +138,17 @@ export function buildSessionContext(
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
+<<<<<<< HEAD
 	private contextBuildOptions: SessionContextBuildOptions;
 
 	constructor(storage: SessionStorage<TMetadata>, contextBuildOptions: SessionContextBuildOptions = {}) {
 		this.storage = storage;
 		this.contextBuildOptions = contextBuildOptions;
+=======
+
+	constructor(storage: SessionStorage<TMetadata>) {
+		this.storage = storage;
+>>>>>>> 43368267 (fix: abstract session lifecycle to any storage backend, provide 2 builtins)
 	}
 
 	getMetadata(): Promise<TMetadata> {
@@ -156,9 +162,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	async cleanup(): Promise<void> {
 		if ("cleanup" in this.storage && typeof this.storage.cleanup === "function") {
 			await (this.storage as SessionStorage<TMetadata> & ClosableSessionStorage).cleanup();
-		}
-		if (this.sqliteStorage && "cleanup" in this.sqliteStorage && typeof this.sqliteStorage.cleanup === "function") {
-			await (this.sqliteStorage as SessionStorage<SqliteSessionMetadata> & ClosableSessionStorage).cleanup();
 		}
 	}
 
@@ -343,9 +346,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			targetId: entryId,
 		};
 		await this.storage.appendEntry(leafEntry);
-		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
-			await this.sqliteStorage.appendEntry(leafEntry);
-		}
 		if (!summary) return undefined;
 		return this.appendTypedEntry({
 			type: "branch_summary",

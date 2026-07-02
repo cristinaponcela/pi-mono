@@ -553,6 +553,18 @@ export interface SqliteSessionListOptions {
 	cwd?: string;
 }
 
+export interface JsonlSessionBackendOptions {
+	kind: "jsonl";
+	sessionsRoot: string;
+}
+
+export interface SqliteSessionBackendOptions {
+	kind: "sqlite";
+	databasePath: string;
+}
+
+export type BuiltinSessionStorageOptions = JsonlSessionBackendOptions | SqliteSessionBackendOptions;
+
 export interface JsonlSessionRepoApi
 	extends SessionRepo<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions> {}
 
