@@ -4,12 +4,10 @@ import { createBranchSummaryMessage, createCompactionSummaryMessage, createCusto
 import type {
 	ActiveToolsChangeEntry,
 	BranchSummaryEntry,
-	ClosableSessionStorage,
 	CompactionEntry,
 	CustomEntry,
 	CustomMessageEntry,
 	LabelEntry,
-	LeafEntry,
 	MessageEntry,
 	ModelChangeEntry,
 	SessionContext,
@@ -69,6 +67,12 @@ export function defaultContextEntryTransform(pathEntries: readonly SessionTreeEn
 
 	const entries: SessionTreeEntry[] = [compaction];
 	const compactionIdx = pathEntries.findIndex((entry) => entry.type === "compaction" && entry.id === compaction.id);
+	if (compaction.retainedTail) {
+		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
+			entries.push(pathEntries[i]!);
+		}
+		return entries;
+	}
 	let foundFirstKept = false;
 	for (let i = 0; i < compactionIdx; i++) {
 		const entry = pathEntries[i]!;
@@ -113,7 +117,7 @@ export function sessionEntryToContextMessages(
 		];
 	}
 	if (entry.type === "compaction") {
-		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp), ...(entry.retainedTail ?? [])];
 	}
 	if (entry.type === "branch_summary" && entry.summary) {
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
@@ -138,17 +142,11 @@ export function buildSessionContext(
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
-<<<<<<< HEAD
 	private contextBuildOptions: SessionContextBuildOptions;
 
 	constructor(storage: SessionStorage<TMetadata>, contextBuildOptions: SessionContextBuildOptions = {}) {
 		this.storage = storage;
 		this.contextBuildOptions = contextBuildOptions;
-=======
-
-	constructor(storage: SessionStorage<TMetadata>) {
-		this.storage = storage;
->>>>>>> 43368267 (fix: abstract session lifecycle to any storage backend, provide 2 builtins)
 	}
 
 	getMetadata(): Promise<TMetadata> {
@@ -157,12 +155,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	getStorage(): SessionStorage<TMetadata> {
 		return this.storage;
-	}
-
-	async cleanup(): Promise<void> {
-		if ("cleanup" in this.storage && typeof this.storage.cleanup === "function") {
-			await (this.storage as SessionStorage<TMetadata> & ClosableSessionStorage).cleanup();
-		}
 	}
 
 	getLeafId(): Promise<string | null> {
@@ -262,6 +254,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		retainedTail?: AgentMessage[],
 	): Promise<string> {
 		return this.appendTypedEntry({
 			type: "compaction",
@@ -271,6 +264,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			summary,
 			firstKeptEntryId,
 			tokensBefore,
+			retainedTail,
 			details,
 			usage,
 			fromHook,
@@ -338,14 +332,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
 		}
-		const leafEntry: LeafEntry = {
-			type: "leaf",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			targetId: entryId,
-		};
-		await this.storage.appendEntry(leafEntry);
+		await this.storage.setLeafId(entryId);
 		if (!summary) return undefined;
 		return this.appendTypedEntry({
 			type: "branch_summary",

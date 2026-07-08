@@ -181,7 +181,8 @@ function decodeEntry(row: SessionEntryRow): SessionTreeEntry {
 			if (
 				typeof payload.summary !== "string" ||
 				typeof payload.firstKeptEntryId !== "string" ||
-				typeof payload.tokensBefore !== "number"
+				typeof payload.tokensBefore !== "number" ||
+				(payload.retainedTail !== undefined && !Array.isArray(payload.retainedTail))
 			) {
 				throw invalidEntry(`entry ${row.id} has invalid compaction payload`);
 			}

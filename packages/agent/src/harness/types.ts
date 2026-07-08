@@ -408,6 +408,7 @@ export interface CompactionEntry<T = unknown> extends SessionTreeEntryBase {
 	summary: string;
 	firstKeptEntryId: string;
 	tokensBefore: number;
+	retainedTail?: AgentMessage[];
 	details?: T;
 	usage?: Usage;
 	fromHook?: boolean;
@@ -827,6 +828,7 @@ export interface CompactResult {
 	tokensBefore: number;
 	/** Usage from the LLM call(s) that generated this summary, if available. */
 	usage?: Usage;
+	retainedTail?: AgentMessage[];
 	details?: unknown;
 }
 
@@ -846,6 +848,7 @@ export interface CompactionPreparation {
 	firstKeptEntryId: string;
 	messagesToSummarize: AgentMessage[];
 	turnPrefixMessages: AgentMessage[];
+	retainedTail: AgentMessage[];
 	isSplitTurn: boolean;
 	tokensBefore: number;
 	previousSummary?: string;
