@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JsonlSessionStorage, loadJsonlSessionMetadata } from "../../src/harness/session/jsonl-storage.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
-import { type MessageEntry, ok, type SessionMetadata } from "../../src/harness/types.ts";
+import { type CompactionEntry, type MessageEntry, ok, type SessionMetadata } from "../../src/harness/types.ts";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.ts";
 
 describe("InMemorySessionStorage", () => {
@@ -80,7 +80,7 @@ describe("InMemorySessionStorage", () => {
 		expect(await storage.getLabel("entry-1")).toBeUndefined();
 	});
 
-	it("walks paths to root", async () => {
+	it("walks paths to root or retained-tail compaction", async () => {
 		const root: MessageEntry = {
 			type: "message",
 			id: "root",
@@ -94,9 +94,29 @@ describe("InMemorySessionStorage", () => {
 			parentId: "root",
 			message: createAssistantMessage("child"),
 		};
-		const storage = new InMemorySessionStorage({ entries: [root, child] });
-		expect((await storage.getPathToRoot("child")).map((entry) => entry.id)).toEqual(["root", "child"]);
-		expect(await storage.getPathToRoot(null)).toEqual([]);
+		const compaction: CompactionEntry = {
+			type: "compaction",
+			id: "compaction",
+			parentId: "child",
+			timestamp: "2026-01-01T00:00:01.000Z",
+			summary: "summary",
+			firstKeptEntryId: "child",
+			tokensBefore: 1234,
+			retainedTail: [createAssistantMessage("child")],
+		};
+		const afterCompaction: MessageEntry = {
+			...root,
+			id: "after-compaction",
+			parentId: "compaction",
+			message: createUserMessage("after"),
+		};
+		const storage = new InMemorySessionStorage({ entries: [root, child, compaction, afterCompaction] });
+		expect((await storage.getPathToRootOrCompaction("child")).map((entry) => entry.id)).toEqual(["root", "child"]);
+		expect((await storage.getPathToRootOrCompaction("after-compaction")).map((entry) => entry.id)).toEqual([
+			"compaction",
+			"after-compaction",
+		]);
+		expect(await storage.getPathToRootOrCompaction(null)).toEqual([]);
 	});
 });
 
@@ -255,7 +275,7 @@ describe("JsonlSessionStorage", () => {
 		const reloaded = await JsonlSessionStorage.open(env, filePath);
 		expect(await reloaded.getLeafId()).toBe("root");
 		expect((await reloaded.getEntries()).at(-1)).toMatchObject({ type: "leaf", targetId: "root" });
-		expect((await loaded.getPathToRoot("child")).map((entry) => entry.id)).toEqual(["root", "child"]);
+		expect((await loaded.getPathToRootOrCompaction("child")).map((entry) => entry.id)).toEqual(["root", "child"]);
 	});
 
 	it("finds entries by type", async () => {
