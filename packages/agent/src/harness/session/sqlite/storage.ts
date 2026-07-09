@@ -28,24 +28,11 @@ interface SessionEntryRow {
 	target_id: string | null;
 	message_role: string | null;
 	custom_type: string | null;
+	entry_counter: number | null;
 }
 
-interface SessionStateRow {
-	session_id: string;
-	leaf_id: string | null;
-	session_name: string | null;
-	model_provider: string | null;
-	model_id: string | null;
-	thinking_level: string | null;
-	active_tool_names: string | null;
-	latest_compaction_entry_id: string | null;
-	latest_compaction_first_kept_entry_id: string | null;
-	latest_compaction_tokens_before: number | null;
-	compaction_count: number;
-	labels_json: string | null;
-	entry_count: number;
-	last_entry_seq: number | null;
-	updated_at: string;
+interface BranchEntryIdRow {
+	entry_id: string;
 }
 
 type EncodedEntry = {
@@ -239,6 +226,27 @@ function rowToMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
 	};
 }
 
+function buildPathToRootOrCompaction(byId: Map<string, SessionTreeEntry>, leafId: string | null): SessionTreeEntry[] {
+	if (leafId === null) return [];
+	const path: SessionTreeEntry[] = [];
+	let stopAtEntryId: string | null = null;
+	let current = byId.get(leafId);
+	if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
+	while (current) {
+		path.unshift(current);
+		if (stopAtEntryId !== null && current.id === stopAtEntryId) break;
+		if (current.type === "compaction") {
+			if (current.retainedTail) break;
+			stopAtEntryId = current.firstKeptEntryId;
+		}
+		if (!current.parentId) break;
+		const parent = byId.get(current.parentId);
+		if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);
+		current = parent;
+	}
+	return path;
+}
+
 async function loadSqliteStorage(
 	db: SqliteDatabase,
 	sessionId: string,
@@ -254,7 +262,7 @@ async function loadSqliteStorage(
 
 	const entryRows = await db
 		.prepare(
-			"SELECT seq, session_id, id, parent_id, type, timestamp, payload, target_id, message_role, custom_type FROM session_entries WHERE session_id = ? ORDER BY seq",
+			"SELECT seq, session_id, id, parent_id, type, timestamp, payload, target_id, message_role, custom_type, entry_counter FROM session_entries WHERE session_id = ? ORDER BY entry_counter, seq",
 		)
 		.all<SessionEntryRow>([sessionId]);
 	const entries = entryRows.map((entryRow) => decodeEntry(entryRow));
@@ -272,12 +280,14 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 	private byId: Map<string, SessionTreeEntry>;
 	private labelsById: Map<string, string>;
 	private currentLeafId: string | null;
+	private activeBranchId: string | null;
 
 	private constructor(
 		db: SqliteDatabase,
 		metadata: SqliteSessionMetadata,
 		entries: SessionTreeEntry[],
 		leafId: string | null,
+		activeBranchId: string | null,
 	) {
 		this.db = db;
 		this.metadata = metadata;
@@ -285,11 +295,18 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		this.byId = new Map(entries.map((entry) => [entry.id, entry]));
 		this.labelsById = buildLabelsById(entries);
 		this.currentLeafId = leafId;
+		this.activeBranchId = activeBranchId;
 	}
 
 	static async open(db: SqliteDatabase, metadata: SqliteSessionMetadata): Promise<SqliteSessionStorage> {
 		const loaded = await loadSqliteStorage(db, metadata.id);
-		return new SqliteSessionStorage(db, rowToMetadata(loaded.row, metadata.path), loaded.entries, loaded.leafId);
+		return new SqliteSessionStorage(
+			db,
+			rowToMetadata(loaded.row, metadata.path),
+			loaded.entries,
+			loaded.leafId,
+			null,
+		);
 	}
 
 	static async create(
@@ -303,11 +320,6 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				"INSERT INTO sessions (id, created_at, cwd, parent_session_id, storage_version) VALUES (?, ?, ?, ?, 1)",
 			)
 			.run([options.sessionId, createdAt, options.cwd, options.parentSessionId ?? null]);
-		await db
-			.prepare(
-				"INSERT INTO session_state (session_id, leaf_id, session_name, model_provider, model_id, thinking_level, active_tool_names, latest_compaction_entry_id, latest_compaction_first_kept_entry_id, latest_compaction_tokens_before, compaction_count, labels_json, entry_count, last_entry_seq, updated_at) VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, 0, NULL, ?)",
-			)
-			.run([options.sessionId, createdAt]);
 		return new SqliteSessionStorage(
 			db,
 			{
@@ -318,6 +330,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				parentSessionId: options.parentSessionId,
 			},
 			[],
+			null,
 			null,
 		);
 	}
@@ -333,58 +346,27 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		return this.currentLeafId;
 	}
 
-	private async updateState(entry: SessionTreeEntry, seq: number): Promise<void> {
-		const state = await this.db
-			.prepare("SELECT * FROM session_state WHERE session_id = ?")
-			.get<SessionStateRow>([this.metadata.id]);
-		if (!state) throw invalidSession(`state row missing for session ${this.metadata.id}`);
-		let sessionName = state.session_name;
-		let modelProvider = state.model_provider;
-		let modelId = state.model_id;
-		let thinkingLevel = state.thinking_level;
-		let activeToolNames = state.active_tool_names;
-		let latestCompactionEntryId = state.latest_compaction_entry_id;
-		let latestCompactionFirstKeptEntryId = state.latest_compaction_first_kept_entry_id;
-		let latestCompactionTokensBefore = state.latest_compaction_tokens_before;
-		let compactionCount = state.compaction_count;
-
-		if (entry.type === "session_info") {
-			sessionName = entry.name ?? null;
-		} else if (entry.type === "model_change") {
-			modelProvider = entry.provider;
-			modelId = entry.modelId;
-		} else if (entry.type === "thinking_level_change") {
-			thinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "active_tools_change") {
-			activeToolNames = JSON.stringify(entry.activeToolNames);
-		} else if (entry.type === "compaction") {
-			latestCompactionEntryId = entry.id;
-			latestCompactionFirstKeptEntryId = entry.firstKeptEntryId;
-			latestCompactionTokensBefore = entry.tokensBefore;
-			compactionCount += 1;
+	private async materializeBranch(leafId: string | null): Promise<void> {
+		const branchId = uuidv7();
+		const path = buildPathToRootOrCompaction(this.byId, leafId);
+		for (const entry of path) {
+			await this.db
+				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id) VALUES (?, ?, ?)")
+				.run([this.metadata.id, branchId, entry.id]);
 		}
+		this.activeBranchId = branchId;
+	}
 
+	private async appendToActiveBranch(entryId: string, parentId: string | null): Promise<void> {
+		if (!this.activeBranchId) {
+			await this.materializeBranch(parentId);
+		}
+		if (!this.activeBranchId) {
+			throw invalidSession(`active branch missing for session ${this.metadata.id}`);
+		}
 		await this.db
-			.prepare(
-				"UPDATE session_state SET leaf_id = ?, session_name = ?, model_provider = ?, model_id = ?, thinking_level = ?, active_tool_names = ?, latest_compaction_entry_id = ?, latest_compaction_first_kept_entry_id = ?, latest_compaction_tokens_before = ?, compaction_count = ?, labels_json = ?, entry_count = ?, last_entry_seq = ?, updated_at = ? WHERE session_id = ?",
-			)
-			.run([
-				leafIdAfterEntry(entry),
-				sessionName,
-				modelProvider,
-				modelId,
-				thinkingLevel,
-				activeToolNames,
-				latestCompactionEntryId,
-				latestCompactionFirstKeptEntryId,
-				latestCompactionTokensBefore,
-				compactionCount,
-				this.labelsById.size > 0 ? JSON.stringify(Object.fromEntries(this.labelsById)) : null,
-				state.entry_count + 1,
-				seq,
-				new Date().toISOString(),
-				this.metadata.id,
-			]);
+			.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id) VALUES (?, ?, ?)")
+			.run([this.metadata.id, this.activeBranchId, entryId]);
 	}
 
 	async setLeafId(leafId: string | null): Promise<void> {
@@ -409,9 +391,10 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		const encoded = encodeEntry(entry);
 		try {
 			await this.db.transaction(async () => {
-				const result = await this.db
+				const entryCounter = this.entries.length + 1;
+				await this.db
 					.prepare(
-						"INSERT INTO session_entries (session_id, id, parent_id, type, timestamp, payload, target_id, message_role, custom_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+						"INSERT INTO session_entries (session_id, id, parent_id, type, timestamp, payload, target_id, message_role, custom_type, entry_counter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 					)
 					.run([
 						this.metadata.id,
@@ -423,12 +406,17 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 						encoded.targetId ?? null,
 						encoded.messageRole ?? null,
 						encoded.customType ?? null,
+						entryCounter,
 					]);
 				this.entries.push(entry);
 				this.byId.set(entry.id, entry);
 				updateLabelCache(this.labelsById, entry);
 				this.currentLeafId = leafIdAfterEntry(entry);
-				await this.updateState(entry, result.lastInsertRowid ?? 0);
+				if (entry.type === "leaf") {
+					await this.materializeBranch(entry.targetId);
+				} else {
+					await this.appendToActiveBranch(entry.id, entry.parentId);
+				}
 			});
 		} catch (error) {
 			if (error instanceof SessionError) throw error;
@@ -450,20 +438,25 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		return this.labelsById.get(id);
 	}
 
+	private async getMaterializedBranchPath(branchId: string): Promise<SessionTreeEntry[]> {
+		const rows = await this.db
+			.prepare(
+				"SELECT e.id AS entry_id FROM session_entries e WHERE e.session_id = ? AND EXISTS (SELECT 1 FROM branch_entries b WHERE b.session_id = e.session_id AND b.branch_id = ? AND b.entry_id = e.id) ORDER BY e.entry_counter, e.seq",
+			)
+			.all<BranchEntryIdRow>([this.metadata.id, branchId]);
+		return rows.map((row) => {
+			const entry = this.byId.get(row.entry_id);
+			if (!entry) throw invalidSession(`Entry ${row.entry_id} not found for branch ${branchId}`);
+			return entry;
+		});
+	}
+
 	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
-		const path: SessionTreeEntry[] = [];
-		let current = this.byId.get(leafId);
-		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
-		while (current) {
-			path.unshift(current);
-			if (current.type === "compaction" && current.retainedTail) break;
-			if (!current.parentId) break;
-			const parent = this.byId.get(current.parentId);
-			if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);
-			current = parent;
+		if (leafId === this.currentLeafId && this.activeBranchId) {
+			return this.getMaterializedBranchPath(this.activeBranchId);
 		}
-		return path;
+		return buildPathToRootOrCompaction(this.byId, leafId);
 	}
 
 	async getEntries(): Promise<SessionTreeEntry[]> {

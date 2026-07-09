@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS session_entries (
 	target_id TEXT NULL,
 	message_role TEXT NULL,
 	custom_type TEXT NULL,
+	entry_counter INTEGER,
 	UNIQUE (session_id, id)
 );
 
@@ -51,23 +52,15 @@ CREATE INDEX IF NOT EXISTS idx_session_entries_session_type ON session_entries(s
 CREATE INDEX IF NOT EXISTS idx_session_entries_session_target ON session_entries(session_id, target_id);
 CREATE INDEX IF NOT EXISTS idx_session_entries_session_message_role ON session_entries(session_id, message_role);
 
-CREATE TABLE IF NOT EXISTS session_state (
-	session_id TEXT PRIMARY KEY,
-	leaf_id TEXT NULL,
-	session_name TEXT NULL,
-	model_provider TEXT NULL,
-	model_id TEXT NULL,
-	thinking_level TEXT NULL,
-	active_tool_names TEXT NULL,
-	latest_compaction_entry_id TEXT NULL,
-	latest_compaction_first_kept_entry_id TEXT NULL,
-	latest_compaction_tokens_before INTEGER NULL,
-	compaction_count INTEGER NOT NULL DEFAULT 0,
-	labels_json TEXT NULL,
-	entry_count INTEGER NOT NULL DEFAULT 0,
-	last_entry_seq INTEGER NULL,
-	updated_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS branch_entries (
+	session_id TEXT NOT NULL,
+	branch_id TEXT NOT NULL,
+	entry_id TEXT NOT NULL,
+	PRIMARY KEY (session_id, branch_id, entry_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_branch_entries_session_branch ON branch_entries(session_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_branch_entries_session_entry ON branch_entries(session_id, entry_id);
 `;
 
 type SqliteSessionRepoEnv = Pick<FileSystem & SqliteEnv, "absolutePath" | "createDir" | "exists" | "openSqlite">;
@@ -94,13 +87,16 @@ async function ensureSqliteSessionSchema(db: SqliteDatabase): Promise<void> {
 	const row = await db.prepare("SELECT version FROM schema_version LIMIT 1").get<{ version: number }>();
 	if (!row) {
 		await db.prepare("INSERT INTO schema_version (version) VALUES (?)").run([SQLITE_SESSION_SCHEMA_VERSION]);
-		return;
-	}
-	if (row.version !== SQLITE_SESSION_SCHEMA_VERSION) {
+	} else if (row.version !== SQLITE_SESSION_SCHEMA_VERSION) {
 		throw new SessionError(
 			"storage",
 			`Unsupported SQLite session schema version ${row.version}; expected ${SQLITE_SESSION_SCHEMA_VERSION}`,
 		);
+	}
+	const entryColumns = await db.prepare("PRAGMA table_info(session_entries)").all<{ name: string }>();
+	if (!entryColumns.some((column) => column.name === "entry_counter")) {
+		await db.exec("ALTER TABLE session_entries ADD COLUMN entry_counter INTEGER NULL");
+		await db.exec("UPDATE session_entries SET entry_counter = seq WHERE entry_counter IS NULL");
 	}
 }
 
@@ -203,7 +199,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 		const db = await this.openDatabase();
 		try {
 			await db.transaction(async () => {
-				await db.prepare("DELETE FROM session_state WHERE session_id = ?").run([metadata.id]);
+				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run([metadata.id]);
 				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run([metadata.id]);
 				const result = await db.prepare("DELETE FROM sessions WHERE id = ?").run([metadata.id]);
 				if (result.changes === 0) {
