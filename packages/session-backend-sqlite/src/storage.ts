@@ -1,14 +1,6 @@
-import type {
-	ClosableSessionStorage,
-	LeafEntry,
-	SessionStorage,
-	SessionTreeEntry,
-	SessionTreeEntryBase,
-	SqliteDatabase,
-	SqliteSessionMetadata,
-} from "../../types.ts";
-import { SessionError } from "../../types.ts";
-import { uuidv7 } from "../uuid.ts";
+import type { LeafEntry, SessionStorage, SessionTreeEntry, SessionTreeEntryBase } from "@earendil-works/pi-agent-core";
+import { SessionError, uuidv7 } from "@earendil-works/pi-agent-core";
+import type { SqliteDatabase, SqliteSessionMetadata } from "./types.ts";
 
 interface SessionRow {
 	id: string;
@@ -226,7 +218,7 @@ function rowToMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
 	};
 }
 
-function buildPathToRootOrCompaction(byId: Map<string, SessionTreeEntry>, leafId: string | null): SessionTreeEntry[] {
+function buildPathToRoot(byId: Map<string, SessionTreeEntry>, leafId: string | null): SessionTreeEntry[] {
 	if (leafId === null) return [];
 	const path: SessionTreeEntry[] = [];
 	let stopAtEntryId: string | null = null;
@@ -273,7 +265,7 @@ async function loadSqliteStorage(
 	return { row, entries, leafId };
 }
 
-export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata>, ClosableSessionStorage {
+export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	private readonly db: SqliteDatabase;
 	private readonly metadata: SqliteSessionMetadata;
 	private entries: SessionTreeEntry[];
@@ -316,9 +308,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 	): Promise<SqliteSessionStorage> {
 		const createdAt = new Date().toISOString();
 		await db
-			.prepare(
-				"INSERT INTO sessions (id, created_at, cwd, parent_session_id, storage_version) VALUES (?, ?, ?, ?, 1)",
-			)
+			.prepare("INSERT INTO sessions (id, created_at, cwd, parent_session_id) VALUES (?, ?, ?, ?)")
 			.run([options.sessionId, createdAt, options.cwd, options.parentSessionId ?? null]);
 		return new SqliteSessionStorage(
 			db,
@@ -348,7 +338,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 
 	private async materializeBranch(leafId: string | null): Promise<void> {
 		const branchId = uuidv7();
-		const path = buildPathToRootOrCompaction(this.byId, leafId);
+		const path = buildPathToRoot(this.byId, leafId);
 		for (const entry of path) {
 			await this.db
 				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id) VALUES (?, ?, ?)")
@@ -451,12 +441,12 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		});
 	}
 
-	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
+	async getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
 		if (leafId === this.currentLeafId && this.activeBranchId) {
 			return this.getMaterializedBranchPath(this.activeBranchId);
 		}
-		return buildPathToRootOrCompaction(this.byId, leafId);
+		return buildPathToRoot(this.byId, leafId);
 	}
 
 	async getEntries(): Promise<SessionTreeEntry[]> {

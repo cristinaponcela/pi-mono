@@ -112,14 +112,13 @@ export class InMemorySessionStorage<TMetadata extends SessionMetadata = SessionM
 		return this.labelsById.get(id);
 	}
 
-	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
+	async getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
 		const path: SessionTreeEntry[] = [];
 		let current = this.byId.get(leafId);
 		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
 		while (current) {
 			path.unshift(current);
-			if (current.type === "compaction" && current.retainedTail) break;
 			if (!current.parentId) break;
 			const parent = this.byId.get(current.parentId);
 			if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);

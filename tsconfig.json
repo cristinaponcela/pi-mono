@@ -17,6 +17,8 @@
 			"@earendil-works/pi-coding-agent/*": ["./packages/coding-agent/src/*"],
 			"@earendil-works/pi-orchestrator": ["./packages/orchestrator/src/index.ts"],
 			"@earendil-works/pi-orchestrator/*": ["./packages/orchestrator/src/*"],
+			"@earendil-works/pi-session-backend-sqlite": ["./packages/session-backend-sqlite/src/index.ts"],
+			"@earendil-works/pi-session-backend-sqlite/*": ["./packages/session-backend-sqlite/src/*"],
 			"typebox": ["./node_modules/typebox"],
 			"@earendil-works/pi-tui": ["./packages/tui/src/index.ts"],
 			"@earendil-works/pi-tui/*": ["./packages/tui/src/*"],
@@ -25,5 +27,9 @@
 		}
 	},
 	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
+	"exclude": [
+		"**/dist/**",
+		"packages/agent/src/harness/session/sqlite/**",
+		"packages/coding-agent/examples/extensions/gondolin/**"
+	]
 }

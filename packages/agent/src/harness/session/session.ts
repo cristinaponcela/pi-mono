@@ -117,7 +117,10 @@ export function sessionEntryToContextMessages(
 		];
 	}
 	if (entry.type === "compaction") {
-		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp), ...(entry.retainedTail ?? [])];
+		return [
+			createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
+			...(entry.retainedTail ?? []),
+		];
 	}
 	if (entry.type === "branch_summary" && entry.summary) {
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
@@ -171,7 +174,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
 		const leafId = fromId ?? (await this.storage.getLeafId());
-		return this.storage.getPathToRootOrCompaction(leafId);
+		return this.storage.getPathToRoot(leafId);
 	}
 
 	async buildContextEntries(options: SessionContextBuildOptions = {}): Promise<SessionTreeEntry[]> {

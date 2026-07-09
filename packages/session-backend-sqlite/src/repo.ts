@@ -1,19 +1,26 @@
+import type { Session } from "@earendil-works/pi-agent-core";
+import {
+	createSessionId,
+	getEntriesToFork,
+	getFileSystemResultOrThrow,
+	SessionError,
+	toSession,
+} from "@earendil-works/pi-agent-core";
+import { SqliteSessionStorage } from "./storage.ts";
 import type {
-	FileSystem,
-	Session,
 	SqliteDatabase,
-	SqliteEnv,
 	SqliteSessionCreateOptions,
 	SqliteSessionListOptions,
 	SqliteSessionMetadata,
 	SqliteSessionRepoApi,
-} from "../../types.ts";
-import { SessionError } from "../../types.ts";
-import { createSessionId, getEntriesToFork, getFileSystemResultOrThrow, toSession } from "../repo-utils.ts";
-import { SqliteSessionStorage } from "./storage.ts";
+	SqliteSessionRepoEnv,
+} from "./types.ts";
 
 const SQLITE_SESSION_SCHEMA_VERSION = 1;
 
+// CPON move out to package, check with bun
+
+// CPON change to migrations, from absurd
 const SQLITE_SESSION_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
 	version INTEGER NOT NULL
@@ -23,28 +30,34 @@ CREATE TABLE IF NOT EXISTS sessions (
 	id TEXT PRIMARY KEY,
 	created_at TEXT NOT NULL,
 	cwd TEXT NOT NULL,
-	parent_session_id TEXT NULL,
-	storage_version INTEGER NOT NULL DEFAULT 1
+	parent_session_id TEXT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 
+// CPON efficiency no row id
+
 CREATE TABLE IF NOT EXISTS session_entries (
-	seq INTEGER PRIMARY KEY,
-	session_id TEXT NOT NULL,
+	session_id TEXT NOT NULL, // CPON composite key session and entry id
 	id TEXT NOT NULL,
 	parent_id TEXT NULL,
 	type TEXT NOT NULL,
 	timestamp TEXT NOT NULL,
-	payload TEXT NOT NULL CHECK (json_valid(payload)),
+	payload TEXT NOT NULL (json_valid(payload)), // CPON verify types at runtime
 	target_id TEXT NULL,
 	message_role TEXT NULL,
 	custom_type TEXT NULL,
-	entry_counter INTEGER,
+	entry_counter INTEGER, // CPON becomes index of entry within session
 	UNIQUE (session_id, id)
 );
+
+CREATE TABLE IF NOT EXISTS sequences (
+	session_id TEXT NOT NULL PRIMARY KEY,
+	next_seq INTEGER NOT NULL,
+);
+// CPON same table as sessions?
 
 CREATE INDEX IF NOT EXISTS idx_session_entries_session_seq ON session_entries(session_id, seq);
 CREATE INDEX IF NOT EXISTS idx_session_entries_session_parent ON session_entries(session_id, parent_id);
@@ -59,11 +72,15 @@ CREATE TABLE IF NOT EXISTS branch_entries (
 	PRIMARY KEY (session_id, branch_id, entry_id)
 );
 
+// CPON missing: materialize key value store for labels, session names, cost, etc (cache of replay per session) - /session
+
+CREATE TABLE IF NOT EXISTS key_value (
+
 CREATE INDEX IF NOT EXISTS idx_branch_entries_session_branch ON branch_entries(session_id, branch_id);
 CREATE INDEX IF NOT EXISTS idx_branch_entries_session_entry ON branch_entries(session_id, entry_id);
 `;
 
-type SqliteSessionRepoEnv = Pick<FileSystem & SqliteEnv, "absolutePath" | "createDir" | "exists" | "openSqlite">;
+// CPON sqlite efficient local operations
 
 function getParentPath(path: string): string {
 	const normalized = path.replace(/[\\/]+$/, "");
@@ -82,7 +99,7 @@ interface SessionRow {
 
 async function ensureSqliteSessionSchema(db: SqliteDatabase): Promise<void> {
 	await db.exec("PRAGMA journal_mode=WAL");
-	await db.exec("PRAGMA synchronous=NORMAL");
+	await db.exec("PRAGMA synchronous=NORMAL"); // CPON double check
 	await db.exec(SQLITE_SESSION_SCHEMA_SQL);
 	const row = await db.prepare("SELECT version FROM schema_version LIMIT 1").get<{ version: number }>();
 	if (!row) {

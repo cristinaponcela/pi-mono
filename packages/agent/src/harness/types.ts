@@ -309,42 +309,6 @@ export interface FileSystem {
 	cleanup(): Promise<void>;
 }
 
-/** Result of a prepared SQLite statement execution. */
-export interface SqliteRunResult {
-	/** Number of rows changed by the statement. */
-	changes: number;
-	/** Inserted row id when the backend exposes one. */
-	lastInsertRowid?: number;
-}
-
-/** Prepared SQLite statement capability used by the harness. */
-export interface SqliteStatement {
-	/** Execute a write/update/delete statement. */
-	run(params?: unknown[]): Promise<SqliteRunResult>;
-	/** Fetch one row from the statement result. */
-	get<TRow extends object>(params?: unknown[]): Promise<TRow | undefined>;
-	/** Fetch all rows from the statement result. */
-	all<TRow extends object>(params?: unknown[]): Promise<TRow[]>;
-}
-
-/** SQLite database capability used by the harness. */
-export interface SqliteDatabase {
-	/** Execute raw SQL, typically for pragmas or schema setup. */
-	exec(sql: string): Promise<void>;
-	/** Prepare a reusable SQL statement. */
-	prepare(sql: string): SqliteStatement;
-	/** Execute work inside a transaction managed by the backend. */
-	transaction<T>(fn: () => Promise<T>): Promise<T>;
-	/** Release database resources. Must be best-effort and must not throw or reject. */
-	close(): Promise<void>;
-}
-
-/** SQLite capability used by the harness. */
-export interface SqliteEnv {
-	/** Open a SQLite database at the addressed path. */
-	openSqlite(path: string): Promise<SqliteDatabase>;
-}
-
 /** Options for {@link Shell.exec}. */
 export interface ShellExecOptions {
 	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
@@ -485,12 +449,6 @@ export interface JsonlSessionMetadata extends SessionMetadata {
 	metadata?: Record<string, unknown>;
 }
 
-export interface SqliteSessionMetadata extends SessionMetadata {
-	cwd: string;
-	path: string;
-	parentSessionId?: string;
-}
-
 export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> {
 	getMetadata(): Promise<TMetadata>;
 	getLeafId(): Promise<string | null>;
@@ -503,12 +461,8 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		type: TType,
 	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>>;
 	getLabel(id: string): Promise<string | undefined>;
-	getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]>;
+	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(): Promise<SessionTreeEntry[]>;
-}
-
-export interface ClosableSessionStorage {
-	cleanup(): Promise<void>;
 }
 
 export type { Session } from "./session/session.ts";
@@ -541,36 +495,12 @@ export interface JsonlSessionCreateOptions extends SessionCreateOptions {
 	metadata?: Record<string, unknown>;
 }
 
-export interface SqliteSessionCreateOptions extends SessionCreateOptions {
-	cwd: string;
-	parentSessionId?: string;
-}
-
 export interface JsonlSessionListOptions {
 	cwd?: string;
 }
 
-export interface SqliteSessionListOptions {
-	cwd?: string;
-}
-
-export interface JsonlSessionBackendOptions {
-	kind: "jsonl";
-	sessionsRoot: string;
-}
-
-export interface SqliteSessionBackendOptions {
-	kind: "sqlite";
-	databasePath: string;
-}
-
-export type BuiltinSessionStorageOptions = JsonlSessionBackendOptions | SqliteSessionBackendOptions;
-
 export interface JsonlSessionRepoApi
 	extends SessionRepo<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions> {}
-
-export interface SqliteSessionRepoApi
-	extends SessionRepo<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions> {}
 
 export type AgentHarnessPhase = "idle" | "turn" | "compaction" | "branch_summary" | "retry";
 
