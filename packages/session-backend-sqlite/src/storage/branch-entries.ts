@@ -17,7 +17,7 @@ export function buildPathToRoot(byId: Map<string, SessionTreeEntry>, leafId: str
 		if (stopAtEntryId !== null && current.id === stopAtEntryId) break;
 		if (current.type === "compaction") {
 			if (current.retainedTail) break;
-			stopAtEntryId = current.firstKeptEntryId;
+			stopAtEntryId = current.firstKeptEntryId ?? null;
 		}
 		if (!current.parentId) break;
 		const parent = byId.get(current.parentId);

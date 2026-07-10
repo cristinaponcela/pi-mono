@@ -73,11 +73,13 @@ export function defaultContextEntryTransform(pathEntries: readonly SessionTreeEn
 		}
 		return entries;
 	}
-	let foundFirstKept = false;
-	for (let i = 0; i < compactionIdx; i++) {
-		const entry = pathEntries[i]!;
-		if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
-		if (foundFirstKept) entries.push(entry);
+	if (compaction.firstKeptEntryId) {
+		let foundFirstKept = false;
+		for (let i = 0; i < compactionIdx; i++) {
+			const entry = pathEntries[i]!;
+			if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
+			if (foundFirstKept) entries.push(entry);
+		}
 	}
 	for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
 		entries.push(pathEntries[i]!);
@@ -252,7 +254,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async appendCompaction<T = unknown>(
 		summary: string,
-		firstKeptEntryId: string,
+		firstKeptEntryId: string | undefined,
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,

@@ -97,14 +97,14 @@ function getMessageFromEntryForCompaction(entry: SessionTreeEntry): AgentMessage
 export interface CompactionResult<T = unknown> {
 	/** Summary text that replaces compacted history in future context. */
 	summary: string;
-	/** Entry id where retained history starts. */
-	firstKeptEntryId: string;
+	/** Entry id where retained history starts. Optional during Pi 2.0 transition. */
+	firstKeptEntryId?: string;
 	/** Estimated context tokens before compaction. */
 	tokensBefore: number;
 	/** Usage from the LLM call(s) that generated this summary, if available. */
 	usage?: Usage;
-	/** Retained recent messages stored directly on the compaction entry. */
-	retainedTail: AgentMessage[];
+	/** Retained recent messages stored directly on the compaction entry. Optional during Pi 2.0 transition. */
+	retainedTail?: AgentMessage[];
 	/** Optional implementation-specific details stored with the compaction entry. */
 	details?: T;
 }
@@ -621,7 +621,9 @@ export function prepareCompaction(
 	if (prevCompactionIndex >= 0) {
 		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
 		previousSummary = prevCompaction.summary;
-		const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
+		const firstKeptEntryIndex = prevCompaction.firstKeptEntryId
+			? pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId)
+			: -1;
 		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
 	}
 	const boundaryEnd = pathEntries.length;

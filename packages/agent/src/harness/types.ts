@@ -370,7 +370,7 @@ export interface ActiveToolsChangeEntry extends SessionTreeEntryBase {
 export interface CompactionEntry<T = unknown> extends SessionTreeEntryBase {
 	type: "compaction";
 	summary: string;
-	firstKeptEntryId: string;
+	firstKeptEntryId?: string;
 	tokensBefore: number;
 	retainedTail?: AgentMessage[];
 	details?: T;
@@ -754,7 +754,7 @@ export interface AbortResult {
 
 export interface CompactResult {
 	summary: string;
-	firstKeptEntryId: string;
+	firstKeptEntryId?: string;
 	tokensBefore: number;
 	/** Usage from the LLM call(s) that generated this summary, if available. */
 	usage?: Usage;

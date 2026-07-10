@@ -730,7 +730,7 @@ describe("harness compaction", () => {
 		expect(result.summary.length).toBeGreaterThan(0);
 		expect(result.firstKeptEntryId).toBeTruthy();
 		expect(result.usage?.totalTokens).toBeGreaterThan(0);
-		expect(result.retainedTail.length).toBeGreaterThan(0);
+		expect(result.retainedTail?.length).toBeGreaterThan(0);
 		expect(result.details).toBeDefined();
 	});
 });
