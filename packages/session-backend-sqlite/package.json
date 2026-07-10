@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-session-backend-sqlite",
-	"version": "0.80.2",
+	"version": "0.80.6",
 	"description": "SQLite session backend for pi agent sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -24,7 +24,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.80.2"
+		"@earendil-works/pi-agent-core": "^0.80.6"
 	},
 	"devDependencies": {
 		"@types/node": "24.12.4",
