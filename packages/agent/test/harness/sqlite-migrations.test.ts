@@ -20,7 +20,7 @@ describe("SQLite migrations", () => {
 		const db = await env.openSqlite(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["0.0.0-0.80.2.sql"]);
+			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql"]);
 			const tables = await db
 				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string; sql: string | null }>();

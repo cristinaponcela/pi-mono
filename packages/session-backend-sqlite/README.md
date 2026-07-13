@@ -16,6 +16,6 @@ It does not contain cross-backend selection logic or JSONL fallback wiring. Back
 Schema setup uses file-based SQLite migrations under `sql/migrations/`.
 
 - `migrations` stores one row per applied migration
-- migration identity comes from the filename using the same version-to-version style as `absurd` (for example `0.0.0-0.80.2.sql`)
-- the highest applied migration target is the current schema version
+- migration identity comes from the filename using ordered numeric names (for example `001_initial.sql`)
+- the current schema is the full ordered set of applied migration files
 - this is separate from any per-session data/version fields
