@@ -20,7 +20,6 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
-		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
@@ -29,8 +28,7 @@
 	"devDependencies": {
 		"@types/node": "24.12.4",
 		"shx": "0.4.0",
-		"typescript": "5.9.3",
-		"vitest": "4.1.9"
+		"typescript": "5.9.3"
 	},
 	"keywords": [
 		"pi",
