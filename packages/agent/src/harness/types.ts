@@ -461,7 +461,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		type: TType,
 	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>>;
 	getLabel(id: string): Promise<string | undefined>;
-	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
+	getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(): Promise<SessionTreeEntry[]>;
 }
 

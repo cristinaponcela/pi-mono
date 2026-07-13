@@ -1,7 +1,7 @@
 import type { LeafEntry, SessionStorage, SessionTreeEntry } from "@earendil-works/pi-agent-core";
 import { SessionError, uuidv7 } from "@earendil-works/pi-agent-core";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
-import { buildPathToRoot, getMaterializedBranchPath } from "./branch-entries.ts";
+import { getMaterializedBranchPathOrCompaction } from "./branch-entries.ts";
 import { decodeEntry, encodeEntry, type SessionEntryRow } from "./session-entries.ts";
 import {
 	applyEntryToMaterializedState,
@@ -140,9 +140,30 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		return this.currentLeafId;
 	}
 
+	private getPathToRootOrCompactionEntries(leafId: string | null): SessionTreeEntry[] {
+		if (leafId === null) return [];
+		const path: SessionTreeEntry[] = [];
+		let stopAtEntryId: string | null = null;
+		let current = this.byId.get(leafId);
+		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
+		while (current) {
+			path.unshift(current);
+			if (stopAtEntryId !== null && current.id === stopAtEntryId) break;
+			if (current.type === "compaction") {
+				if (current.retainedTail) break;
+				stopAtEntryId = current.firstKeptEntryId ?? null;
+			}
+			if (!current.parentId) break;
+			const parent = this.byId.get(current.parentId);
+			if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);
+			current = parent;
+		}
+		return path;
+	}
+
 	private async materializeBranch(leafId: string | null): Promise<void> {
 		const branchId = uuidv7();
-		const path = buildPathToRoot(this.byId, leafId);
+		const path = this.getPathToRootOrCompactionEntries(leafId);
 		for (const entry of path) {
 			await this.db
 				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id) VALUES (?, ?, ?)")
@@ -256,12 +277,12 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		return this.labelsById.get(id);
 	}
 
-	async getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]> {
+	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
 		if (leafId === this.currentLeafId && this.activeBranchId) {
-			return getMaterializedBranchPath(this.db, this.metadata.id, this.activeBranchId, this.byId);
+			return getMaterializedBranchPathOrCompaction(this.db, this.metadata.id, this.activeBranchId, this.byId);
 		}
-		return buildPathToRoot(this.byId, leafId);
+		return this.getPathToRootOrCompactionEntries(leafId);
 	}
 
 	async getEntries(): Promise<SessionTreeEntry[]> {

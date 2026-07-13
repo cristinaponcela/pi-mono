@@ -1,33 +1,11 @@
 import type { SessionTreeEntry } from "@earendil-works/pi-agent-core";
-import { SessionError } from "@earendil-works/pi-agent-core";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface BranchEntryIdRow {
 	entry_id: string;
 }
 
-export function buildPathToRoot(byId: Map<string, SessionTreeEntry>, leafId: string | null): SessionTreeEntry[] {
-	if (leafId === null) return [];
-	const path: SessionTreeEntry[] = [];
-	let stopAtEntryId: string | null = null;
-	let current = byId.get(leafId);
-	if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
-	while (current) {
-		path.unshift(current);
-		if (stopAtEntryId !== null && current.id === stopAtEntryId) break;
-		if (current.type === "compaction") {
-			if (current.retainedTail) break;
-			stopAtEntryId = current.firstKeptEntryId ?? null;
-		}
-		if (!current.parentId) break;
-		const parent = byId.get(current.parentId);
-		if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);
-		current = parent;
-	}
-	return path;
-}
-
-export async function getMaterializedBranchPath(
+export async function getMaterializedBranchPathOrCompaction(
 	db: SqliteDatabase,
 	sessionId: string,
 	branchId: string,

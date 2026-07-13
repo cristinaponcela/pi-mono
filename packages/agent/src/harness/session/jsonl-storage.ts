@@ -293,13 +293,19 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return this.labelsById.get(id);
 	}
 
-	async getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]> {
+	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
 		const path: SessionTreeEntry[] = [];
+		let stopAtEntryId: string | null = null;
 		let current = this.byId.get(leafId);
 		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
 		while (current) {
 			path.unshift(current);
+			if (stopAtEntryId !== null && current.id === stopAtEntryId) break;
+			if (current.type === "compaction") {
+				if (current.retainedTail) break;
+				stopAtEntryId = current.firstKeptEntryId ?? null;
+			}
 			if (!current.parentId) break;
 			const parent = this.byId.get(current.parentId);
 			if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);

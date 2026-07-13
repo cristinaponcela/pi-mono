@@ -176,7 +176,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
 		const leafId = fromId ?? (await this.storage.getLeafId());
-		return this.storage.getPathToRoot(leafId);
+		return this.storage.getPathToRootOrCompaction(leafId);
 	}
 
 	async buildContextEntries(options: SessionContextBuildOptions = {}): Promise<SessionTreeEntry[]> {
