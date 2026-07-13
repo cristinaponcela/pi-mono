@@ -17,9 +17,6 @@ import type {
 	SqliteSessionRepoEnv,
 } from "./types.ts";
 
-// CPON move out to package, check with bun
-// CPON sqlite efficient local operations
-
 function getParentPath(path: string): string {
 	const normalized = path.replace(/[\\/]+$/, "");
 	const lastSlash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));

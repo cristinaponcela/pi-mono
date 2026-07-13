@@ -1,7 +1,5 @@
 -- Initial SQLite session backend schema.
 
--- CPON becomes index of entry within session
-
 CREATE TABLE IF NOT EXISTS sessions (
 	id TEXT PRIMARY KEY,
 	created_at TEXT NOT NULL,
