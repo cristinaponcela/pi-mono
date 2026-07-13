@@ -17,6 +17,32 @@ import { advanceSequence, getNextSequence } from "./session-sequences.ts";
 import { rowToMetadata, type SessionRow } from "./sessions.ts";
 import { generateEntryId, invalidSession, leafIdAfterEntry } from "./shared.ts";
 
+async function decodeEntryRows(entryRows: SessionEntryRow[]): Promise<{
+	entries: SessionTreeEntry[];
+	leafId: string | null;
+}> {
+	const entries: SessionTreeEntry[] = [];
+	let leafId: string | null = null;
+	for (const entryRow of entryRows) {
+		try {
+			const entry = decodeEntry(entryRow);
+			entries.push(entry);
+			leafId = leafIdAfterEntry(entry);
+		} catch {
+			// Keep JSONL-like permissive resume behavior: skip malformed entries.
+		}
+	}
+	return { entries, leafId };
+}
+
+async function loadAllEntryRows(db: SqliteDatabase, sessionId: string): Promise<SessionEntryRow[]> {
+	return db
+		.prepare(
+			"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload, target_id, message_role, custom_type FROM session_entries WHERE session_id = ? ORDER BY entry_seq",
+		)
+		.all<SessionEntryRow>([sessionId]);
+}
+
 async function loadSqliteStorage(
 	db: SqliteDatabase,
 	sessionId: string,
@@ -31,22 +57,7 @@ async function loadSqliteStorage(
 		.get<SessionRow>([sessionId]);
 	if (!row) throw new SessionError("not_found", `Session not found: ${sessionId}`);
 
-	const entryRows = await db
-		.prepare(
-			"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload, target_id, message_role, custom_type FROM session_entries WHERE session_id = ? ORDER BY entry_seq",
-		)
-		.all<SessionEntryRow>([sessionId]);
-	const entries: SessionTreeEntry[] = [];
-	let leafId: string | null = null;
-	for (const entryRow of entryRows) {
-		try {
-			const entry = decodeEntry(entryRow);
-			entries.push(entry);
-			leafId = leafIdAfterEntry(entry);
-		} catch {
-			// Keep JSONL-like permissive resume behavior: skip malformed entries.
-		}
-	}
+	const { entries, leafId } = await decodeEntryRows(await loadAllEntryRows(db, sessionId));
 	const materializedRow = await db
 		.prepare(
 			"SELECT session_id, name, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total, labels_json, model_thinking_configs_json FROM session_materialized WHERE session_id = ?",
@@ -264,13 +275,40 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 	}
 
 	async getEntry(id: string): Promise<SessionTreeEntry | undefined> {
-		return this.byId.get(id);
+		const row = await this.db
+			.prepare(
+				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload, target_id, message_role, custom_type FROM session_entries WHERE session_id = ? AND id = ?",
+			)
+			.get<SessionEntryRow>([this.metadata.id, id]);
+		if (!row) return undefined;
+		try {
+			const entry = decodeEntry(row);
+			this.byId.set(entry.id, entry);
+			return entry;
+		} catch {
+			return undefined;
+		}
 	}
 
 	async findEntries<TType extends SessionTreeEntry["type"]>(
 		type: TType,
 	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>> {
-		return this.entries.filter((entry): entry is Extract<SessionTreeEntry, { type: TType }> => entry.type === type);
+		const rows = await this.db
+			.prepare(
+				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload, target_id, message_role, custom_type FROM session_entries WHERE session_id = ? AND type = ? ORDER BY entry_seq",
+			)
+			.all<SessionEntryRow>([this.metadata.id, type]);
+		const entries: Array<Extract<SessionTreeEntry, { type: TType }>> = [];
+		for (const row of rows) {
+			try {
+				const entry = decodeEntry(row) as Extract<SessionTreeEntry, { type: TType }>;
+				this.byId.set(entry.id, entry);
+				entries.push(entry);
+			} catch {
+				// Keep JSONL-like permissive resume behavior: skip malformed entries.
+			}
+		}
+		return entries;
 	}
 
 	async getLabel(id: string): Promise<string | undefined> {
@@ -286,7 +324,29 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 	}
 
 	async getEntries(): Promise<SessionTreeEntry[]> {
-		return [...this.entries];
+		const entries: SessionTreeEntry[] = [];
+		let afterSeq = 0;
+		const pageSize = 500;
+		for (;;) {
+			const rows = this.activeBranchId
+				? await this.db
+						.prepare(
+							"SELECT e.session_id, e.id, e.entry_seq, e.parent_id, e.type, e.timestamp, e.payload, e.target_id, e.message_role, e.custom_type FROM branch_entries b JOIN session_entries e ON e.session_id = b.session_id AND e.id = b.entry_id WHERE b.session_id = ? AND b.branch_id = ? AND e.entry_seq > ? ORDER BY e.entry_seq LIMIT ?",
+						)
+						.all<SessionEntryRow>([this.metadata.id, this.activeBranchId, afterSeq, pageSize])
+				: await this.db
+						.prepare(
+							"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload, target_id, message_role, custom_type FROM session_entries WHERE session_id = ? AND entry_seq > ? ORDER BY entry_seq LIMIT ?",
+						)
+						.all<SessionEntryRow>([this.metadata.id, afterSeq, pageSize]);
+			if (rows.length === 0) return entries;
+			const decoded = await decodeEntryRows(rows);
+			for (const entry of decoded.entries) {
+				this.byId.set(entry.id, entry);
+				entries.push(entry);
+			}
+			afterSeq = rows.at(-1)?.entry_seq ?? afterSeq;
+		}
 	}
 
 	async cleanup(): Promise<void> {
