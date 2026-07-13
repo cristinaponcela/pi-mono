@@ -79,11 +79,3 @@ export async function applyMigrations(db: SqliteDatabase): Promise<void> {
 		applied.add(migration.id);
 	}
 }
-
-export async function getCurrentMigrationId(db: SqliteDatabase): Promise<string | undefined> {
-	await ensureMigrationsTable(db);
-	const row = await db
-		.prepare("SELECT id FROM migrations ORDER BY applied_at DESC, id DESC LIMIT 1")
-		.get<{ id: string }>();
-	return row?.id;
-}
