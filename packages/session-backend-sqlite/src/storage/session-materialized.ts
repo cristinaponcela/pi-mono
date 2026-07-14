@@ -3,14 +3,14 @@ import { invalidSession, isRecord } from "./shared.ts";
 
 export interface SessionMaterializedRow {
 	session_id: string;
-	name: string | null;
-	message_count: number;
-	cached_tokens: number;
-	uncached_tokens: number;
-	total_tokens: number;
-	cost_total: number;
-	labels_json: string;
-	model_thinking_configs_json: string;
+	payload: string;
+}
+
+export interface EntryMaterializedRow {
+	session_id: string;
+	entry_seq: number;
+	type: string;
+	payload: string;
 }
 
 export interface ModelThinkingConfig {
@@ -32,52 +32,13 @@ export interface SessionMaterializedState {
 	currentThinkingLevel: ThinkingLevel | null;
 }
 
-export function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
-	if (entry.type !== "label") return;
-	const label = entry.label?.trim();
-	if (label) {
-		labelsById.set(entry.targetId, label);
-	} else {
-		labelsById.delete(entry.targetId);
-	}
-}
-
-export function createEmptyMaterializedState(): SessionMaterializedState {
-	return {
-		name: undefined,
-		messageCount: 0,
-		cachedTokens: 0,
-		uncachedTokens: 0,
-		totalTokens: 0,
-		costTotal: 0,
-		labelsById: new Map<string, string>(),
-		modelThinkingConfigs: [],
-		currentModel: null,
-		currentThinkingLevel: null,
-	};
-}
-
-export function serializeLabels(labelsById: ReadonlyMap<string, string>): string {
-	const entries = [...labelsById.entries()].sort(([left], [right]) => left.localeCompare(right));
-	return JSON.stringify(Object.fromEntries(entries));
-}
-
-function parseLabelsJson(json: string): Map<string, string> {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(json);
-	} catch (error) {
-		throw invalidSession(`materialized labels_json is not valid JSON`, error instanceof Error ? error : undefined);
-	}
-	if (!isRecord(parsed) || Array.isArray(parsed)) {
-		throw invalidSession("materialized labels_json is not an object");
-	}
-	const labelsById = new Map<string, string>();
-	for (const [key, value] of Object.entries(parsed)) {
-		if (typeof value !== "string") throw invalidSession("materialized labels_json has a non-string label");
-		if (value.trim()) labelsById.set(key, value);
-	}
-	return labelsById;
+interface SessionMaterializedSummary {
+	name?: string;
+	messageCount: number;
+	cachedTokens: number;
+	uncachedTokens: number;
+	totalTokens: number;
+	costTotal: number;
 }
 
 function compareModelThinkingConfig(left: ModelThinkingConfig, right: ModelThinkingConfig): number {
@@ -96,8 +57,16 @@ function normalizeModelThinkingConfigs(configs: readonly ModelThinkingConfig[]):
 	return [...unique.values()].sort(compareModelThinkingConfig);
 }
 
-export function serializeModelThinkingConfigs(configs: readonly ModelThinkingConfig[]): string {
-	return JSON.stringify(normalizeModelThinkingConfigs(configs));
+function addModelThinkingConfig(
+	state: SessionMaterializedState,
+	provider: string,
+	modelId: string,
+	thinkingLevel: ThinkingLevel,
+): void {
+	state.modelThinkingConfigs = normalizeModelThinkingConfigs([
+		...state.modelThinkingConfigs,
+		{ provider, modelId, thinkingLevel },
+	]);
 }
 
 export function isThinkingLevel(value: unknown): value is ThinkingLevel {
@@ -109,44 +78,6 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
 		value === "high" ||
 		value === "xhigh"
 	);
-}
-
-function parseModelThinkingConfigsJson(json: string): ModelThinkingConfig[] {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(json);
-	} catch (error) {
-		throw invalidSession(
-			`materialized model_thinking_configs_json is not valid JSON`,
-			error instanceof Error ? error : undefined,
-		);
-	}
-	if (!Array.isArray(parsed)) {
-		throw invalidSession("materialized model_thinking_configs_json is not an array");
-	}
-	const configs: ModelThinkingConfig[] = [];
-	for (const item of parsed) {
-		if (!isRecord(item) || typeof item.provider !== "string" || typeof item.modelId !== "string") {
-			throw invalidSession("materialized model_thinking_configs_json has an invalid item");
-		}
-		if (!isThinkingLevel(item.thinkingLevel)) {
-			throw invalidSession("materialized model_thinking_configs_json has an invalid thinking level");
-		}
-		configs.push({ provider: item.provider, modelId: item.modelId, thinkingLevel: item.thinkingLevel });
-	}
-	return normalizeModelThinkingConfigs(configs);
-}
-
-function addModelThinkingConfig(
-	state: SessionMaterializedState,
-	provider: string,
-	modelId: string,
-	thinkingLevel: ThinkingLevel,
-): void {
-	state.modelThinkingConfigs = normalizeModelThinkingConfigs([
-		...state.modelThinkingConfigs,
-		{ provider, modelId, thinkingLevel },
-	]);
 }
 
 function getAssistantUsage(message: unknown):
@@ -185,14 +116,35 @@ function getAssistantUsage(message: unknown):
 	};
 }
 
+export function createEmptyMaterializedState(): SessionMaterializedState {
+	return {
+		name: undefined,
+		messageCount: 0,
+		cachedTokens: 0,
+		uncachedTokens: 0,
+		totalTokens: 0,
+		costTotal: 0,
+		labelsById: new Map<string, string>(),
+		modelThinkingConfigs: [],
+		currentModel: null,
+		currentThinkingLevel: null,
+	};
+}
+
 export function applyEntryToMaterializedState(state: SessionMaterializedState, entry: SessionTreeEntry): void {
 	switch (entry.type) {
 		case "session_info":
 			state.name = entry.name?.trim() || undefined;
 			break;
-		case "label":
-			updateLabelCache(state.labelsById, entry);
+		case "label": {
+			const label = entry.label?.trim();
+			if (label) {
+				state.labelsById.set(entry.targetId, label);
+			} else {
+				state.labelsById.delete(entry.targetId);
+			}
 			break;
+		}
 		case "model_change":
 			state.currentModel = { provider: entry.provider, modelId: entry.modelId };
 			if (state.currentThinkingLevel) {
@@ -235,45 +187,177 @@ export function applyEntryToMaterializedState(state: SessionMaterializedState, e
 	}
 }
 
-export function materializedStateFromRow(
-	row: SessionMaterializedRow,
-	entries: SessionTreeEntry[],
+export function serializeSummary(state: SessionMaterializedState): string {
+	const summary: SessionMaterializedSummary = {
+		name: state.name,
+		messageCount: state.messageCount,
+		cachedTokens: state.cachedTokens,
+		uncachedTokens: state.uncachedTokens,
+		totalTokens: state.totalTokens,
+		costTotal: state.costTotal,
+	};
+	return JSON.stringify(summary);
+}
+
+function parseSummary(json: string): SessionMaterializedSummary {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch (error) {
+		throw invalidSession(
+			`materialized session summary is not valid JSON`,
+			error instanceof Error ? error : undefined,
+		);
+	}
+	if (!isRecord(parsed) || Array.isArray(parsed)) {
+		throw invalidSession("materialized session summary is not an object");
+	}
+	if (
+		(parsed.name !== undefined && typeof parsed.name !== "string") ||
+		typeof parsed.messageCount !== "number" ||
+		typeof parsed.cachedTokens !== "number" ||
+		typeof parsed.uncachedTokens !== "number" ||
+		typeof parsed.totalTokens !== "number" ||
+		typeof parsed.costTotal !== "number"
+	) {
+		throw invalidSession("materialized session summary has invalid fields");
+	}
+	return {
+		name: parsed.name?.trim() || undefined,
+		messageCount: parsed.messageCount,
+		cachedTokens: parsed.cachedTokens,
+		uncachedTokens: parsed.uncachedTokens,
+		totalTokens: parsed.totalTokens,
+		costTotal: parsed.costTotal,
+	};
+}
+
+function parseEntryMaterializedPayload(row: EntryMaterializedRow): unknown {
+	try {
+		return JSON.parse(row.payload);
+	} catch (error) {
+		throw invalidSession(
+			`materialized entry row ${row.entry_seq} is not valid JSON`,
+			error instanceof Error ? error : undefined,
+		);
+	}
+}
+
+export function materializedStateFromRows(
+	summaryRow: SessionMaterializedRow,
+	entryRows: EntryMaterializedRow[],
 ): SessionMaterializedState {
+	const summary = parseSummary(summaryRow.payload);
 	const state: SessionMaterializedState = {
-		name: row.name ?? undefined,
-		messageCount: row.message_count,
-		cachedTokens: row.cached_tokens,
-		uncachedTokens: row.uncached_tokens,
-		totalTokens: row.total_tokens,
-		costTotal: row.cost_total,
-		labelsById: parseLabelsJson(row.labels_json),
-		modelThinkingConfigs: parseModelThinkingConfigsJson(row.model_thinking_configs_json),
+		name: summary.name,
+		messageCount: summary.messageCount,
+		cachedTokens: summary.cachedTokens,
+		uncachedTokens: summary.uncachedTokens,
+		totalTokens: summary.totalTokens,
+		costTotal: summary.costTotal,
+		labelsById: new Map<string, string>(),
+		modelThinkingConfigs: [],
 		currentModel: null,
 		currentThinkingLevel: null,
 	};
-	for (const entry of entries) {
-		if (entry.type === "model_change") {
-			state.currentModel = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "thinking_level_change") {
-			if (isThinkingLevel(entry.thinkingLevel)) state.currentThinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "message") {
-			const usage = getAssistantUsage(entry.message);
-			if (usage) state.currentModel = { provider: usage.provider, modelId: usage.modelId };
+	for (const row of entryRows) {
+		const payload = parseEntryMaterializedPayload(row);
+		if (!isRecord(payload)) throw invalidSession(`materialized entry row ${row.entry_seq} is not an object`);
+		if (row.type === "label") {
+			if (typeof payload.targetId !== "string") {
+				throw invalidSession(`materialized label row ${row.entry_seq} is missing targetId`);
+			}
+			if (payload.label !== null && payload.label !== undefined && typeof payload.label !== "string") {
+				throw invalidSession(`materialized label row ${row.entry_seq} has invalid label`);
+			}
+			const label = typeof payload.label === "string" ? payload.label.trim() : "";
+			if (label) {
+				state.labelsById.set(payload.targetId, label);
+			} else {
+				state.labelsById.delete(payload.targetId);
+			}
+			continue;
+		}
+		if (row.type === "model") {
+			if (typeof payload.provider !== "string" || typeof payload.modelId !== "string") {
+				throw invalidSession(`materialized model row ${row.entry_seq} has invalid fields`);
+			}
+			state.currentModel = { provider: payload.provider, modelId: payload.modelId };
+			if (state.currentThinkingLevel) {
+				addModelThinkingConfig(state, payload.provider, payload.modelId, state.currentThinkingLevel);
+			}
+			continue;
+		}
+		if (row.type === "thinking") {
+			if (!isThinkingLevel(payload.thinkingLevel)) {
+				throw invalidSession(`materialized thinking row ${row.entry_seq} has invalid thinking level`);
+			}
+			state.currentThinkingLevel = payload.thinkingLevel;
+			if (state.currentModel) {
+				addModelThinkingConfig(
+					state,
+					state.currentModel.provider,
+					state.currentModel.modelId,
+					payload.thinkingLevel,
+				);
+			}
 		}
 	}
 	return state;
 }
 
 export function materializedStateValues(sessionId: string, state: SessionMaterializedState): unknown[] {
-	return [
-		sessionId,
-		state.name ?? null,
-		state.messageCount,
-		state.cachedTokens,
-		state.uncachedTokens,
-		state.totalTokens,
-		state.costTotal,
-		serializeLabels(state.labelsById),
-		serializeModelThinkingConfigs(state.modelThinkingConfigs),
-	];
+	return [sessionId, serializeSummary(state)];
+}
+
+export function entryMaterializedValues(
+	entry: SessionTreeEntry,
+): Array<{ type: EntryMaterializedRow["type"]; payload: string }> {
+	switch (entry.type) {
+		case "label":
+			return [
+				{
+					type: "label",
+					payload: JSON.stringify({ targetId: entry.targetId, label: entry.label ?? null }),
+				},
+			];
+		case "model_change":
+			return [
+				{
+					type: "model",
+					payload: JSON.stringify({ provider: entry.provider, modelId: entry.modelId }),
+				},
+			];
+		case "thinking_level_change":
+			if (!isThinkingLevel(entry.thinkingLevel)) return [];
+			return [
+				{
+					type: "thinking",
+					payload: JSON.stringify({ thinkingLevel: entry.thinkingLevel }),
+				},
+			];
+		case "message": {
+			const usage = getAssistantUsage(entry.message);
+			if (!usage) return [];
+			return [
+				{
+					type: "model",
+					payload: JSON.stringify({ provider: usage.provider, modelId: usage.modelId }),
+				},
+			];
+		}
+		case "active_tools_change":
+		case "branch_summary":
+		case "compaction":
+		case "custom":
+		case "custom_message":
+		case "leaf":
+		case "session_info":
+			return [];
+		default: {
+			const exhaustive: never = entry;
+			void exhaustive;
+			return [];
+		}
+	}
 }

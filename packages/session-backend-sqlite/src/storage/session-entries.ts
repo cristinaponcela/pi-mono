@@ -9,15 +9,9 @@ export interface SessionEntryRow {
 	type: SessionTreeEntry["type"];
 	timestamp: string;
 	payload: string;
-	target_id: string | null;
-	message_role: string | null;
-	custom_type: string | null;
 }
 
 export type EncodedEntry = {
-	targetId?: string | null;
-	messageRole?: string;
-	customType?: string;
 	payload: string;
 };
 
@@ -140,29 +134,7 @@ function entryToPayload<TEntry extends SessionTreeEntry>(entry: TEntry): EntryPa
 
 export function encodeEntry(entry: SessionTreeEntry): EncodedEntry {
 	validateSessionTreeEntry(entry);
-	switch (entry.type) {
-		case "message":
-			return { payload: JSON.stringify(entryToPayload(entry)), messageRole: entry.message.role };
-		case "custom":
-			return { payload: JSON.stringify(entryToPayload(entry)), customType: entry.customType };
-		case "custom_message":
-			return { payload: JSON.stringify(entryToPayload(entry)), customType: entry.customType };
-		case "label":
-			return { payload: JSON.stringify(entryToPayload(entry)), targetId: entry.targetId };
-		case "leaf":
-			return { payload: JSON.stringify(entryToPayload(entry)), targetId: entry.targetId };
-		case "thinking_level_change":
-		case "model_change":
-		case "active_tools_change":
-		case "compaction":
-		case "branch_summary":
-		case "session_info":
-			return { payload: JSON.stringify(entryToPayload(entry)) };
-		default: {
-			const exhaustive: never = entry;
-			return exhaustive;
-		}
-	}
+	return { payload: JSON.stringify(entryToPayload(entry)) };
 }
 
 export function decodeEntry(row: SessionEntryRow): SessionTreeEntry {

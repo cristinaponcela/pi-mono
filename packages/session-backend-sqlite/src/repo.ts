@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
 import { SqliteSessionStorage } from "./storage/index.ts";
+import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";
 import type {
 	SqliteDatabase,
 	SqliteSessionCreateOptions,
@@ -23,23 +24,6 @@ function getParentPath(path: string): string {
 	if (lastSlash < 0) return ".";
 	if (lastSlash === 0) return normalized.slice(0, 1);
 	return normalized.slice(0, lastSlash);
-}
-
-interface SessionRow {
-	id: string;
-	created_at: string;
-	cwd: string;
-	parent_session_id: string | null;
-}
-
-function toMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
-	return {
-		id: row.id,
-		createdAt: row.created_at,
-		cwd: row.cwd,
-		path,
-		parentSessionId: row.parent_session_id ?? undefined,
-	};
 }
 
 async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
@@ -97,6 +81,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 			cwd: options.cwd,
 			sessionId: id,
 			parentSessionId: options.parentSessionId,
+			metadata: options.metadata,
 		});
 		return toSession(storage);
 	}
@@ -122,13 +107,15 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 			const rows = options.cwd
 				? await db
 						.prepare(
-							"SELECT id, created_at, cwd, parent_session_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
+							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
 						)
 						.all<SessionRow>([options.cwd])
 				: await db
-						.prepare("SELECT id, created_at, cwd, parent_session_id FROM sessions ORDER BY created_at DESC")
+						.prepare(
+							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions ORDER BY created_at DESC",
+						)
 						.all<SessionRow>();
-			return rows.map((row) => toMetadata(row, path));
+			return rows.map((row) => rowToMetadata(row, path));
 		} finally {
 			await db.close();
 		}
@@ -140,6 +127,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 			await db.transaction(async () => {
 				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run([metadata.id]);
 				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run([metadata.id]);
+				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run([metadata.id]);
 				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run([metadata.id]);
 				await db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run([metadata.id]);
 				const result = await db.prepare("DELETE FROM sessions WHERE id = ?").run([metadata.id]);
@@ -163,6 +151,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 			cwd: options.cwd,
 			sessionId: id,
 			parentSessionId: options.parentSessionId ?? sourceMetadata.id,
+			metadata: options.metadata ?? sourceMetadata.metadata,
 		});
 		for (const entry of forkedEntries) {
 			await storage.appendEntry(entry);

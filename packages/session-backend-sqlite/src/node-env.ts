@@ -1,6 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { SQLInputValue } from "node:sqlite";
+// CPON use npm sqlite and no built in :(((
+// bun or other specific, pick and load. and cry.
+// static and shared libraries in linux?
+// test to load sqlite to bun executable as shared library. problems?
+// -> Armin will deal with this :)
 import { DatabaseSync } from "node:sqlite";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "./types.ts";

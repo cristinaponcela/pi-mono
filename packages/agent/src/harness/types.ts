@@ -487,6 +487,7 @@ export interface SessionRepo<
 	list(options?: TListOptions): Promise<TMetadata[]>;
 	delete(metadata: TMetadata): Promise<void>;
 	fork(source: TMetadata, options: SessionForkOptions & TCreateOptions): Promise<Session<TMetadata>>;
+	// CPON add search, not opt rn, desc order?
 }
 
 export interface JsonlSessionCreateOptions extends SessionCreateOptions {

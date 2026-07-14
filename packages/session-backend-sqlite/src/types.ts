@@ -32,11 +32,13 @@ export interface SqliteSessionMetadata extends SessionMetadata {
 	cwd: string;
 	path: string;
 	parentSessionId?: string;
+	metadata?: Record<string, unknown>;
 }
 
 export interface SqliteSessionCreateOptions extends SessionCreateOptions {
 	cwd: string;
 	parentSessionId?: string;
+	metadata?: Record<string, unknown>;
 }
 
 export interface SqliteSessionListOptions {
