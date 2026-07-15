@@ -8,7 +8,7 @@ import type { SQLInputValue } from "node:sqlite";
 // -> Armin will deal with this :)
 import { DatabaseSync } from "node:sqlite";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "./types.ts";
+import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "../types.ts";
 
 class NodeSqliteStatement implements SqliteStatement {
 	private readonly statement: ReturnType<DatabaseSync["prepare"]>;

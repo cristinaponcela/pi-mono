@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SqliteNodeExecutionEnv, SqliteSessionRepo } from "../../../session-backend-sqlite/src/index.ts";
+import { SqliteNodeExecutionEnv } from "../../../session-backend-sqlite/src/env/node.ts";
+import { SqliteSessionRepo } from "../../../session-backend-sqlite/src/index.ts";
 import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
 
 function createTempDir(): string {

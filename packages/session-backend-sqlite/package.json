@@ -10,6 +10,22 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./env/node": {
+			"types": "./dist/env/node.d.ts",
+			"import": "./dist/env/node.js"
+		},
+		"./env/bun": {
+			"types": "./dist/env/bun.d.ts",
+			"import": "./dist/env/bun.js"
+		},
+		"./env/better-sqlite3": {
+			"types": "./dist/env/better-sqlite3.d.ts",
+			"import": "./dist/env/better-sqlite3.js"
+		},
+		"./env/sqlite3": {
+			"types": "./dist/env/sqlite3.d.ts",
+			"import": "./dist/env/sqlite3.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [
@@ -25,7 +41,12 @@
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "^0.80.6"
 	},
+	"optionalDependencies": {
+		"better-sqlite3": "12.11.1",
+		"sqlite3": "6.0.1"
+	},
 	"devDependencies": {
+		"@types/better-sqlite3": "7.6.13",
 		"@types/node": "24.12.4",
 		"shx": "0.4.0",
 		"typescript": "5.9.3"
