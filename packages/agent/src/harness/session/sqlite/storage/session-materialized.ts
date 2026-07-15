@@ -1,4 +1,5 @@
-import type { SessionStats, SessionTreeEntry, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "../../../../types.ts";
+import type { SessionStats, SessionTreeEntry } from "../../../types.ts";
 import { invalidSession, isRecord } from "./shared.ts";
 
 export interface SessionMaterializedRow {

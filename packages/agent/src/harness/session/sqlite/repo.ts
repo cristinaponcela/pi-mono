@@ -1,11 +1,6 @@
-import type { Session } from "@earendil-works/pi-agent-core";
-import {
-	createSessionId,
-	getEntriesToFork,
-	getFileSystemResultOrThrow,
-	SessionError,
-	toSession,
-} from "@earendil-works/pi-agent-core";
+import type { Session } from "../../types.ts";
+import { SessionError } from "../../types.ts";
+import { createSessionId, getEntriesToFork, getFileSystemResultOrThrow, toSession } from "../repo-utils.ts";
 import { applyMigrations } from "./migrations.ts";
 import { SqliteSessionStorage } from "./storage/index.ts";
 import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";

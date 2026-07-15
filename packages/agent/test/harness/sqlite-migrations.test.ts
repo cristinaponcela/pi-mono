@@ -2,12 +2,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SqliteNodeExecutionEnv } from "../../../session-backend-sqlite/src/env/node.ts";
-import { SqliteSessionRepo } from "../../../session-backend-sqlite/src/index.ts";
+import { SqliteNodeExecutionEnv } from "../../src/harness/session/sqlite/env/node.ts";
+import { SqliteSessionRepo } from "../../src/harness/session/sqlite/index.ts";
 import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
 
 function createTempDir(): string {
-	return mkdtempSync(join(tmpdir(), "pi-session-backend-sqlite-"));
+	return mkdtempSync(join(tmpdir(), "pi-agent-sqlite-"));
 }
 
 describe("SQLite migrations", () => {

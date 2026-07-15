@@ -7,7 +7,7 @@ import type { SQLInputValue } from "node:sqlite";
 // test to load sqlite to bun executable as shared library. problems?
 // -> Armin will deal with this :)
 import { DatabaseSync } from "node:sqlite";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { NodeExecutionEnv } from "../../../env/nodejs.ts";
 import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "../types.ts";
 
 class NodeSqliteStatement implements SqliteStatement {

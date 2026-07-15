@@ -2,7 +2,7 @@
 import { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { NodeExecutionEnv } from "../../../env/nodejs.ts";
 import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "../types.ts";
 
 function getNumberField(record: Record<string, unknown>, key: string): number | undefined {

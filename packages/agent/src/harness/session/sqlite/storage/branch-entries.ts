@@ -1,4 +1,4 @@
-import type { SessionTreeEntry } from "@earendil-works/pi-agent-core";
+import type { SessionTreeEntry } from "../../../types.ts";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface BranchEntryRow {

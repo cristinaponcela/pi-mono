@@ -14,6 +14,26 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
+		"./sqlite": {
+			"types": "./dist/harness/session/sqlite/index.d.ts",
+			"import": "./dist/harness/session/sqlite/index.js"
+		},
+		"./sqlite/env/node": {
+			"types": "./dist/harness/session/sqlite/env/node.d.ts",
+			"import": "./dist/harness/session/sqlite/env/node.js"
+		},
+		"./sqlite/env/bun": {
+			"types": "./dist/harness/session/sqlite/env/bun.d.ts",
+			"import": "./dist/harness/session/sqlite/env/bun.js"
+		},
+		"./sqlite/env/better-sqlite3": {
+			"types": "./dist/harness/session/sqlite/env/better-sqlite3.d.ts",
+			"import": "./dist/harness/session/sqlite/env/better-sqlite3.js"
+		},
+		"./sqlite/env/sqlite3": {
+			"types": "./dist/harness/session/sqlite/env/sqlite3.d.ts",
+			"import": "./dist/harness/session/sqlite/env/sqlite3.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [
@@ -22,7 +42,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "tsgo -p tsconfig.build.json && shx mkdir -p dist/harness/session/sqlite/sql/migrations && shx cp src/harness/session/sqlite/sql/migrations/*.sql dist/harness/session/sqlite/sql/migrations/",
 		"test": "vitest --run",
 		"test:harness": "vitest --run --config vitest.harness.config.ts",
 		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage",
@@ -33,6 +53,10 @@
 		"ignore": "7.0.5",
 		"typebox": "1.1.38",
 		"yaml": "2.9.0"
+	},
+	"optionalDependencies": {
+		"better-sqlite3": "12.11.1",
+		"sqlite3": "6.0.1"
 	},
 	"keywords": [
 		"ai",
@@ -52,8 +76,10 @@
 		"node": ">=22.19.0"
 	},
 	"devDependencies": {
+		"@types/better-sqlite3": "7.6.13",
 		"@types/node": "24.12.4",
 		"@vitest/coverage-v8": "4.1.9",
+		"shx": "0.4.0",
 		"typescript": "5.9.3",
 		"vitest": "4.1.9"
 	}

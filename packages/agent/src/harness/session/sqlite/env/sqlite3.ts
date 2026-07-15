@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { NodeExecutionEnv } from "../../../env/nodejs.ts";
 import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "../types.ts";
 
 const require = createRequire(import.meta.url);

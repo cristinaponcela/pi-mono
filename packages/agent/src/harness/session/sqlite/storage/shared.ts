@@ -1,5 +1,6 @@
-import type { SessionTreeEntry } from "@earendil-works/pi-agent-core";
-import { SessionError, uuidv7 } from "@earendil-works/pi-agent-core";
+import type { SessionTreeEntry } from "../../../types.ts";
+import { SessionError } from "../../../types.ts";
+import { uuidv7 } from "../../uuid.ts";
 
 export function generateEntryId(byId: { has(id: string): boolean }): string {
 	for (let i = 0; i < 100; i++) {
