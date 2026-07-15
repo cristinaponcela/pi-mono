@@ -93,6 +93,16 @@ describe("SQLite migrations", () => {
 				.prepare("SELECT active_leaf_id FROM sessions WHERE id = ?")
 				.get<{ active_leaf_id: string | null }>(["session-1"]);
 			expect(row?.active_leaf_id).toBe(rootId);
+			const latestBranchRow = await db
+				.prepare(
+					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1",
+				)
+				.get<{ branch_id: string; entry_id: string; entry_seq: number }>(["session-1"]);
+			const latestSessionEntry = await db
+				.prepare("SELECT id, type FROM session_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1")
+				.get<{ id: string; type: string }>(["session-1"]);
+			expect(latestSessionEntry?.type).toBe("leaf");
+			expect(latestBranchRow?.entry_id).toBe(latestSessionEntry?.id);
 		} finally {
 			await db.close();
 		}
@@ -128,6 +138,42 @@ describe("SQLite migrations", () => {
 		} finally {
 			await db.close();
 		}
+	});
+
+	it("reopens using branch materialization and session summary state", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new SqliteNodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		const rootId = await session.appendMessage(createUserMessage("root"));
+		await session.appendMessage(createAssistantMessage("first child"));
+		await session.appendSessionName("  Reopened Session  ");
+		await session.getStorage().setLeafId(rootId);
+		await session.appendMessage(createAssistantMessage("branched child"));
+
+		const reopened = await repo.open(await session.getMetadata());
+		expect(await reopened.getSessionName()).toBe("Reopened Session");
+		expect((await reopened.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect((await reopened.buildContext()).messages.at(-1)).toMatchObject({
+			content: [{ type: "text", text: "branched child" }],
+		});
+	});
+
+	it("pages entries by entry_seq cursor", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new SqliteNodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		await session.appendMessage(createUserMessage("one"));
+		await session.appendMessage(createAssistantMessage("two"));
+		await session.appendMessage(createUserMessage("three"));
+
+		expect((await session.getEntries({ limit: 2 })).map((entry) => entry.type)).toEqual(["message", "message"]);
+		expect((await session.getEntries({ afterEntrySeq: 2, limit: 2 })).map((entry) => entry.type)).toEqual([
+			"message",
+		]);
 	});
 
 	it("materializes session summary fields transactionally", async () => {
@@ -171,6 +217,8 @@ describe("SQLite migrations", () => {
 				uncachedTokens: 110,
 				totalTokens: 175,
 				costTotal: 0.37,
+				currentModel: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+				currentThinkingLevel: "high",
 			});
 			const entryRows = await db
 				.prepare(
@@ -185,16 +233,8 @@ describe("SQLite migrations", () => {
 			expect(
 				entryRows.some((entryRow) => entryRow.type === "label" && JSON.parse(entryRow.payload).targetId === userId),
 			).toBe(true);
-			expect(
-				entryRows.some(
-					(entryRow) => entryRow.type === "thinking" && JSON.parse(entryRow.payload).thinkingLevel === "high",
-				),
-			).toBe(true);
-			expect(
-				entryRows.some(
-					(entryRow) => entryRow.type === "model" && JSON.parse(entryRow.payload).modelId === "claude-sonnet-4-5",
-				),
-			).toBe(true);
+			expect(entryRows.some((entryRow) => entryRow.type === "thinking")).toBe(false);
+			expect(entryRows.some((entryRow) => entryRow.type === "model")).toBe(false);
 		} finally {
 			await db.close();
 		}

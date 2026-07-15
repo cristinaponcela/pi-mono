@@ -40,6 +40,8 @@ interface SessionMaterializedSummary {
 	uncachedTokens: number;
 	totalTokens: number;
 	costTotal: number;
+	currentModel?: { provider: string; modelId: string } | null;
+	currentThinkingLevel?: ThinkingLevel | null;
 }
 
 function compareModelThinkingConfig(left: ModelThinkingConfig, right: ModelThinkingConfig): number {
@@ -196,6 +198,8 @@ export function serializeSummary(state: SessionMaterializedState): string {
 		uncachedTokens: state.uncachedTokens,
 		totalTokens: state.totalTokens,
 		costTotal: state.costTotal,
+		currentModel: state.currentModel,
+		currentThinkingLevel: state.currentThinkingLevel,
 	};
 	return JSON.stringify(summary);
 }
@@ -213,13 +217,21 @@ function parseSummary(json: string): SessionMaterializedSummary {
 	if (!isRecord(parsed) || Array.isArray(parsed)) {
 		throw invalidSession("materialized session summary is not an object");
 	}
+	const currentModel = parsed.currentModel;
+	const currentThinkingLevel = parsed.currentThinkingLevel;
 	if (
 		(parsed.name !== undefined && typeof parsed.name !== "string") ||
 		typeof parsed.messageCount !== "number" ||
 		typeof parsed.cachedTokens !== "number" ||
 		typeof parsed.uncachedTokens !== "number" ||
 		typeof parsed.totalTokens !== "number" ||
-		typeof parsed.costTotal !== "number"
+		typeof parsed.costTotal !== "number" ||
+		(currentModel !== undefined &&
+			currentModel !== null &&
+			(!isRecord(currentModel) ||
+				typeof currentModel.provider !== "string" ||
+				typeof currentModel.modelId !== "string")) ||
+		(currentThinkingLevel !== undefined && currentThinkingLevel !== null && !isThinkingLevel(currentThinkingLevel))
 	) {
 		throw invalidSession("materialized session summary has invalid fields");
 	}
@@ -230,6 +242,11 @@ function parseSummary(json: string): SessionMaterializedSummary {
 		uncachedTokens: parsed.uncachedTokens,
 		totalTokens: parsed.totalTokens,
 		costTotal: parsed.costTotal,
+		currentModel:
+			currentModel && isRecord(currentModel)
+				? { provider: currentModel.provider as string, modelId: currentModel.modelId as string }
+				: (currentModel ?? undefined),
+		currentThinkingLevel: (currentThinkingLevel as ThinkingLevel | null | undefined) ?? undefined,
 	};
 }
 
@@ -258,8 +275,8 @@ export function materializedStateFromRows(
 		costTotal: summary.costTotal,
 		labelsById: new Map<string, string>(),
 		modelThinkingConfigs: [],
-		currentModel: null,
-		currentThinkingLevel: null,
+		currentModel: summary.currentModel ?? null,
+		currentThinkingLevel: summary.currentThinkingLevel ?? null,
 	};
 	for (const row of entryRows) {
 		const payload = parseEntryMaterializedPayload(row);
@@ -279,29 +296,7 @@ export function materializedStateFromRows(
 			}
 			continue;
 		}
-		if (row.type === "model") {
-			if (typeof payload.provider !== "string" || typeof payload.modelId !== "string") {
-				throw invalidSession(`materialized model row ${row.entry_seq} has invalid fields`);
-			}
-			state.currentModel = { provider: payload.provider, modelId: payload.modelId };
-			if (state.currentThinkingLevel) {
-				addModelThinkingConfig(state, payload.provider, payload.modelId, state.currentThinkingLevel);
-			}
-			continue;
-		}
-		if (row.type === "thinking") {
-			if (!isThinkingLevel(payload.thinkingLevel)) {
-				throw invalidSession(`materialized thinking row ${row.entry_seq} has invalid thinking level`);
-			}
-			state.currentThinkingLevel = payload.thinkingLevel;
-			if (state.currentModel) {
-				addModelThinkingConfig(
-					state,
-					state.currentModel.provider,
-					state.currentModel.modelId,
-					payload.thinkingLevel,
-				);
-			}
+		if (row.type !== "label") {
 		}
 	}
 	return state;
@@ -333,30 +328,9 @@ export function entryMaterializedValues(
 				},
 			];
 		case "model_change":
-			return [
-				{
-					type: "model",
-					payload: JSON.stringify({ provider: entry.provider, modelId: entry.modelId }),
-				},
-			];
 		case "thinking_level_change":
-			if (!isThinkingLevel(entry.thinkingLevel)) return [];
-			return [
-				{
-					type: "thinking",
-					payload: JSON.stringify({ thinkingLevel: entry.thinkingLevel }),
-				},
-			];
-		case "message": {
-			const usage = getAssistantUsage(entry.message);
-			if (!usage) return [];
-			return [
-				{
-					type: "model",
-					payload: JSON.stringify({ provider: usage.provider, modelId: usage.modelId }),
-				},
-			];
-		}
+		case "message":
+			return [];
 		case "active_tools_change":
 		case "branch_summary":
 		case "compaction":

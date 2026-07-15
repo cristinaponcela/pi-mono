@@ -1,6 +1,7 @@
 import { uuidv7 } from "@earendil-works/pi-ai";
 import {
 	type LeafEntry,
+	type SessionEntryCursorOptions,
 	SessionError,
 	type SessionMetadata,
 	type SessionStorage,
@@ -112,6 +113,11 @@ export class InMemorySessionStorage<TMetadata extends SessionMetadata = SessionM
 		return this.labelsById.get(id);
 	}
 
+	async getSessionName(): Promise<string | undefined> {
+		const entries = await this.findEntries("session_info");
+		return entries[entries.length - 1]?.name?.trim() || undefined;
+	}
+
 	async getSessionStats() {
 		let messageCount = 0;
 		let cachedTokens = 0;
@@ -158,7 +164,9 @@ export class InMemorySessionStorage<TMetadata extends SessionMetadata = SessionM
 		return path;
 	}
 
-	async getEntries(): Promise<SessionTreeEntry[]> {
-		return [...this.entries];
+	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		const start = options?.afterEntrySeq ?? 0;
+		const end = options?.limit === undefined ? undefined : start + options.limit;
+		return this.entries.slice(start, end);
 	}
 }

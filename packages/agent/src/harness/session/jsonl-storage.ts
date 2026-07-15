@@ -1,7 +1,14 @@
-import { uuidv7 } from "@earendil-works/pi-ai";
-import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../types.ts";
+import type {
+	FileSystem,
+	JsonlSessionMetadata,
+	LeafEntry,
+	SessionEntryCursorOptions,
+	SessionStorage,
+	SessionTreeEntry,
+} from "../types.ts";
 import { SessionError, toError } from "../types.ts";
 import { getFileSystemResultOrThrow } from "./repo-utils.ts";
+import { uuidv7 } from "./uuid.ts";
 
 type JsonlSessionStorageFileSystem = Pick<FileSystem, "readTextFile" | "readTextLines" | "writeFile" | "appendFile">;
 
@@ -293,6 +300,11 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return this.labelsById.get(id);
 	}
 
+	async getSessionName(): Promise<string | undefined> {
+		const entries = await this.findEntries("session_info");
+		return entries[entries.length - 1]?.name?.trim() || undefined;
+	}
+
 	async getSessionStats() {
 		let messageCount = 0;
 		let cachedTokens = 0;
@@ -339,7 +351,9 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return path;
 	}
 
-	async getEntries(): Promise<SessionTreeEntry[]> {
-		return [...this.entries];
+	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		const start = options?.afterEntrySeq ?? 0;
+		const end = options?.limit === undefined ? undefined : start + options.limit;
+		return this.entries.slice(start, end);
 	}
 }

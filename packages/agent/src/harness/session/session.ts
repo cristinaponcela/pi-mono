@@ -11,6 +11,7 @@ import type {
 	MessageEntry,
 	ModelChangeEntry,
 	SessionContext,
+	SessionEntryCursorOptions,
 	SessionInfoEntry,
 	SessionMetadata,
 	SessionStats,
@@ -171,8 +172,8 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return this.storage.getEntry(id);
 	}
 
-	getEntries(): Promise<SessionTreeEntry[]> {
-		return this.storage.getEntries();
+	getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		return this.storage.getEntries(options);
 	}
 
 	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
@@ -207,8 +208,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	async getSessionName(): Promise<string | undefined> {
-		const entries = await this.storage.findEntries("session_info");
-		return entries[entries.length - 1]?.name?.trim() || undefined;
+		return this.storage.getSessionName();
 	}
 
 	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
