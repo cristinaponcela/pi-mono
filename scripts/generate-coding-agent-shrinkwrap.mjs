@@ -12,9 +12,7 @@ const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
 const internalPackagePrefix = "@earendil-works/pi-";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
-	["better-sqlite3@12.11.1", "native SQLite addon used only by the optional sqlite env adapter"],
 	["protobufjs@7.6.4", "postinstall only warns about protobufjs version scheme mismatches"],
-	["sqlite3@6.0.1", "native SQLite addon used only by the optional sqlite env adapter"],
 ]);
 
 const args = new Set(process.argv.slice(2));

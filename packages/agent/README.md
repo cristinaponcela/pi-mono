@@ -8,6 +8,27 @@ Stateful agent with tool execution and event streaming. Built on `@earendil-work
 npm install @earendil-works/pi-agent-core
 ```
 
+### SQLite session backends
+
+The SQLite session backend lives under the `@earendil-works/pi-agent-core/sqlite` subpaths.
+
+Built-in runtimes do not require extra npm packages:
+
+- `@earendil-works/pi-agent-core/sqlite/env/node`
+- `@earendil-works/pi-agent-core/sqlite/env/bun`
+
+The npm-native adapters are exported, but their drivers are not installed automatically. Users who want them must install the driver package themselves:
+
+```bash
+npm install better-sqlite3
+npm install sqlite3
+```
+
+Then use the matching adapter subpath:
+
+- `@earendil-works/pi-agent-core/sqlite/env/better-sqlite3`
+- `@earendil-works/pi-agent-core/sqlite/env/sqlite3`
+
 ## Quick Start
 
 ```typescript
