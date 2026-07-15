@@ -10,11 +10,11 @@ const distDir = resolve(packageDir, "dist");
 const migrationSourceDir = resolve(packageDir, "src/harness/session/sqlite/sql/migrations");
 const migrationDestDir = resolve(distDir, "harness/session/sqlite/sql/migrations");
 
-async function clean(): Promise<void> {
+async function clean() {
 	await rm(distDir, { recursive: true, force: true });
 }
 
-async function copySqliteMigrations(): Promise<void> {
+async function copySqliteMigrations() {
 	await mkdir(migrationDestDir, { recursive: true });
 	await cp(migrationSourceDir, migrationDestDir, { recursive: true });
 }
