@@ -13,6 +13,7 @@ import {
 	type SessionMaterializedRow,
 	type SessionMaterializedState,
 	serializeSummary,
+	sessionStatsFromMaterializedState,
 } from "./session-materialized.ts";
 import { advanceSequence, getNextSequence } from "./session-sequences.ts";
 import { rowToMetadata, type SessionRow } from "./sessions.ts";
@@ -59,6 +60,18 @@ async function loadEntryRowsByIds(
 	return new Map(rows.map((row) => [row.id, row]));
 }
 
+async function hasExistingChild(db: SqliteDatabase, sessionId: string, parentId: string | null): Promise<boolean> {
+	const row =
+		parentId === null
+			? await db
+					.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND parent_id IS NULL LIMIT 1")
+					.get<{ found: number }>([sessionId])
+			: await db
+					.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND parent_id = ? LIMIT 1")
+					.get<{ found: number }>([sessionId, parentId]);
+	return row !== undefined;
+}
+
 async function loadSqliteStorage(
 	db: SqliteDatabase,
 	sessionId: string,
@@ -73,10 +86,12 @@ async function loadSqliteStorage(
 		.get<SessionRow>([sessionId]);
 	if (!row) throw new SessionError("not_found", `Session not found: ${sessionId}`);
 
-	const { entries, leafId } = await decodeEntryRows(await loadAllEntryRows(db, sessionId));
-	if (row.active_leaf_id !== leafId) {
-		await db.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?").run([leafId, sessionId]);
-		row.active_leaf_id = leafId;
+	const { entries, leafId: derivedLeafId } = await decodeEntryRows(await loadAllEntryRows(db, sessionId));
+	const hasMaterializedLeaf = row.active_leaf_id === null || entries.some((entry) => entry.id === row.active_leaf_id);
+	const leafId = hasMaterializedLeaf ? row.active_leaf_id : derivedLeafId;
+	if (row.active_leaf_id !== derivedLeafId) {
+		await db.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?").run([derivedLeafId, sessionId]);
+		row.active_leaf_id = derivedLeafId;
 	}
 	const materializedRow = await db
 		.prepare("SELECT session_id, payload FROM session_materialized WHERE session_id = ?")
@@ -215,7 +230,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 
 	private async materializeBranch(leafId: string | null): Promise<void> {
 		const branchId = uuidv7();
-		const path = this.getPathToRootOrCompactionEntries(leafId);
+		const path = await this.getPathToRootOrCompaction(leafId);
 		const entryRowsById = await loadEntryRowsByIds(
 			this.db,
 			this.metadata.id,
@@ -276,6 +291,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		try {
 			applyEntryToMaterializedState(this.materializedState, entry);
 			await this.db.transaction(async () => {
+				const parentHadExistingChild = await hasExistingChild(this.db, this.metadata.id, entry.parentId);
 				const nextSeq = await getNextSequence(this.db, this.metadata.id);
 				await this.db
 					.prepare(
@@ -306,8 +322,12 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 					.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?")
 					.run([this.currentLeafId, this.metadata.id]);
 				if (entry.type === "leaf") {
+					this.activeBranchId = null;
 					await this.materializeBranch(entry.targetId);
 				} else {
+					if (parentHadExistingChild) {
+						await this.materializeBranch(entry.parentId);
+					}
 					await this.appendToActiveBranch(entry.id, entry.parentId);
 				}
 			});
@@ -358,6 +378,10 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 
 	async getLabel(id: string): Promise<string | undefined> {
 		return this.labelsById.get(id);
+	}
+
+	async getSessionStats() {
+		return sessionStatsFromMaterializedState(this.materializedState);
 	}
 
 	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {

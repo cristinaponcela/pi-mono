@@ -437,6 +437,14 @@ export interface SessionContext {
 	activeToolNames: string[] | null;
 }
 
+export interface SessionStats {
+	messageCount: number;
+	cachedTokens: number;
+	uncachedTokens: number;
+	totalTokens: number;
+	costTotal: number;
+}
+
 export interface SessionMetadata {
 	id: string;
 	createdAt: string;
@@ -461,6 +469,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		type: TType,
 	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>>;
 	getLabel(id: string): Promise<string | undefined>;
+	getSessionStats(): Promise<SessionStats>;
 	getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(): Promise<SessionTreeEntry[]>;
 }

@@ -101,6 +101,34 @@ describe("SQLite migrations", () => {
 		expect(childId).not.toBe(rootId);
 	});
 
+	it("materializes a new branch when appending from a parent with an existing child", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new SqliteNodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		const rootId = await session.appendMessage(createUserMessage("root"));
+		const firstChildId = await session.appendMessage(createAssistantMessage("first child"));
+		await session.getStorage().setLeafId(rootId);
+		const secondChildId = await session.appendMessage(createAssistantMessage("second child"));
+
+		const db = await env.openSqlite(databasePath);
+		try {
+			const branchRows = await db
+				.prepare(
+					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY branch_id, entry_seq",
+				)
+				.all<{ branch_id: string; entry_id: string; entry_seq: number }>(["session-1"]);
+			const branchIds = [...new Set(branchRows.map((row) => row.branch_id))];
+			expect(branchIds).toHaveLength(3);
+			expect(branchRows.filter((row) => row.entry_id === rootId)).toHaveLength(3);
+			expect(branchRows.filter((row) => row.entry_id === firstChildId)).toHaveLength(1);
+			expect(branchRows.filter((row) => row.entry_id === secondChildId)).toHaveLength(1);
+		} finally {
+			await db.close();
+		}
+	});
+
 	it("materializes session summary fields transactionally", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");

@@ -13,6 +13,7 @@ import type {
 	SessionContext,
 	SessionInfoEntry,
 	SessionMetadata,
+	SessionStats,
 	SessionStorage,
 	SessionTreeEntry,
 	ThinkingLevelChangeEntry,
@@ -199,6 +200,10 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	getLabel(id: string): Promise<string | undefined> {
 		return this.storage.getLabel(id);
+	}
+
+	getSessionStats(): Promise<SessionStats> {
+		return this.storage.getSessionStats();
 	}
 
 	async getSessionName(): Promise<string | undefined> {

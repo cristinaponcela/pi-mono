@@ -293,6 +293,31 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return this.labelsById.get(id);
 	}
 
+	async getSessionStats() {
+		let messageCount = 0;
+		let cachedTokens = 0;
+		let uncachedTokens = 0;
+		let totalTokens = 0;
+		let costTotal = 0;
+		for (const entry of this.entries) {
+			if (entry.type !== "message") continue;
+			messageCount += 1;
+			const message = entry.message;
+			if (message.role !== "assistant") continue;
+			cachedTokens += message.usage.cacheRead;
+			uncachedTokens += message.usage.input + message.usage.cacheWrite;
+			totalTokens += message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite;
+			costTotal += message.usage.cost.total;
+		}
+		return {
+			messageCount,
+			cachedTokens,
+			uncachedTokens,
+			totalTokens,
+			costTotal,
+		};
+	}
+
 	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
 		const path: SessionTreeEntry[] = [];
