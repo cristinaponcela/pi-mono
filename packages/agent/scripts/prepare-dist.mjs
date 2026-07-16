@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageDir = resolve(scriptDir, "..");
 const distDir = resolve(packageDir, "dist");
-const migrationSourceDir = resolve(packageDir, "src/harness/session/sqlite/sql/migrations");
-const migrationDestDir = resolve(distDir, "harness/session/sqlite/sql/migrations");
+const migrationSourceDir = resolve(packageDir, "src/harness/session/sqlite/migrations");
+const migrationDestDir = resolve(distDir, "harness/session/sqlite/migrations");
 
 async function clean() {
 	await rm(distDir, { recursive: true, force: true });

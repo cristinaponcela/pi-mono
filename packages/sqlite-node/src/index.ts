@@ -1,14 +1,11 @@
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
 import type { SQLInputValue } from "node:sqlite";
-// CPON use npm sqlite and no built in :(((
-// bun or other specific, pick and load. and cry.
-// static and shared libraries in linux?
-// test to load sqlite to bun executable as shared library. problems?
-// -> Armin will deal with this :)
 import { DatabaseSync } from "node:sqlite";
-import { NodeExecutionEnv } from "../../../env/nodejs.ts";
-import type { SqliteDatabase, SqliteRunResult, SqliteStatement } from "../types.ts";
+import type {
+	SqliteDatabase,
+	SqliteDatabaseFactory,
+	SqliteRunResult,
+	SqliteStatement,
+} from "@earendil-works/pi-agent-core/sqlite";
 
 class NodeSqliteStatement implements SqliteStatement {
 	private readonly statement: ReturnType<DatabaseSync["prepare"]>;
@@ -73,14 +70,14 @@ class NodeSqliteDatabase implements SqliteDatabase {
 	}
 }
 
-function resolvePath(cwd: string, path: string): string {
-	return resolve(cwd, path);
+export function wrapNodeSqliteDatabase(db: DatabaseSync): SqliteDatabase {
+	return new NodeSqliteDatabase(db);
 }
 
-export class SqliteNodeExecutionEnv extends NodeExecutionEnv {
-	async openSqlite(path: string): Promise<SqliteDatabase> {
-		const resolved = resolvePath(this.cwd, path);
-		await mkdir(resolve(resolved, ".."), { recursive: true });
-		return new NodeSqliteDatabase(new DatabaseSync(resolved));
-	}
+export function createNodeSqliteFactory(): SqliteDatabaseFactory {
+	return {
+		async open(path: string): Promise<SqliteDatabase> {
+			return new NodeSqliteDatabase(new DatabaseSync(path));
+		},
+	};
 }

@@ -23,9 +23,8 @@ export interface SqliteDatabase {
 	close(): Promise<void>;
 }
 
-/** SQLite capability used by the SQLite session backend. */
-export interface SqliteEnv {
-	openSqlite(path: string): Promise<SqliteDatabase>;
+export interface SqliteDatabaseFactory {
+	open(path: string): Promise<SqliteDatabase>;
 }
 
 export interface SqliteSessionMetadata extends SessionMetadata {
@@ -53,4 +52,4 @@ export interface SqliteSessionBackendOptions {
 export interface SqliteSessionRepoApi
 	extends SessionRepo<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions> {}
 
-export type SqliteSessionRepoEnv = Pick<FileSystem & SqliteEnv, "absolutePath" | "createDir" | "exists" | "openSqlite">;
+export type SqliteSessionRepoEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;

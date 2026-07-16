@@ -1,0 +1,36 @@
+{
+	"name": "@earendil-works/pi-agent-sqlite-node",
+	"version": "0.80.7",
+	"description": "Node sqlite adapter for @earendil-works/pi-agent-core SQLite session storage",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
+		"build": "tsgo -p tsconfig.build.json",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/sqlite-node"
+		},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "^0.80.7"
+	}
+}

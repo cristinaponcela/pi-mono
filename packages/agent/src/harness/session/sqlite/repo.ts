@@ -6,6 +6,7 @@ import { SqliteSessionStorage } from "./storage/index.ts";
 import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";
 import type {
 	SqliteDatabase,
+	SqliteDatabaseFactory,
 	SqliteSessionCreateOptions,
 	SqliteSessionListOptions,
 	SqliteSessionMetadata,
@@ -29,11 +30,13 @@ async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
 
 export class SqliteSessionRepo implements SqliteSessionRepoApi {
 	private readonly env: SqliteSessionRepoEnv;
+	private readonly sqlite: SqliteDatabaseFactory;
 	private readonly databasePathInput: string;
 	private databasePath: string | undefined;
 
-	constructor(options: { env: SqliteSessionRepoEnv; databasePath: string }) {
+	constructor(options: { env: SqliteSessionRepoEnv; sqlite: SqliteDatabaseFactory; databasePath: string }) {
 		this.env = options.env;
+		this.sqlite = options.sqlite;
 		this.databasePathInput = options.databasePath;
 	}
 
@@ -58,7 +61,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 
 	private async openDatabase(): Promise<SqliteDatabase> {
 		await this.ensureDatabaseDir();
-		const db = await this.env.openSqlite(await this.getDatabasePath());
+		const db = await this.sqlite.open(await this.getDatabasePath());
 		try {
 			await configureSqliteDatabase(db);
 			await applyMigrations(db);

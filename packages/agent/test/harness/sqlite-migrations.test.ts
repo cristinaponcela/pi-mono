@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SqliteNodeExecutionEnv } from "../../src/harness/session/sqlite/env/node.ts";
+import { createNodeSqliteFactory } from "../../../sqlite-node/src/index.ts";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { SqliteSessionRepo } from "../../src/harness/session/sqlite/index.ts";
 import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
 
@@ -14,11 +15,12 @@ describe("SQLite migrations", () => {
 	it("applies file-based migrations and records them", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath });
 		await repo.create({ cwd: root, id: "session-1" });
 
-		const db = await env.openSqlite(databasePath);
+		const db = await sqlite.open(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
 			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql"]);
@@ -56,8 +58,8 @@ describe("SQLite migrations", () => {
 	it("persists session metadata through create, list, open, and fork", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const source = await repo.create({
 			cwd: root,
 			id: "session-1",
@@ -80,14 +82,15 @@ describe("SQLite migrations", () => {
 	it("materializes active leaf id in sessions transactionally", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const childId = await session.appendMessage(createAssistantMessage("child"));
 		await session.getStorage().setLeafId(rootId);
 
-		const db = await env.openSqlite(databasePath);
+		const db = await sqlite.open(databasePath);
 		try {
 			const row = await db
 				.prepare("SELECT active_leaf_id FROM sessions WHERE id = ?")
@@ -115,15 +118,16 @@ describe("SQLite migrations", () => {
 	it("materializes a new branch when appending from a parent with an existing child", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const firstChildId = await session.appendMessage(createAssistantMessage("first child"));
 		await session.getStorage().setLeafId(rootId);
 		const secondChildId = await session.appendMessage(createAssistantMessage("second child"));
 
-		const db = await env.openSqlite(databasePath);
+		const db = await sqlite.open(databasePath);
 		try {
 			const branchRows = await db
 				.prepare(
@@ -143,8 +147,8 @@ describe("SQLite migrations", () => {
 	it("reopens using branch materialization and session summary state", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		await session.appendMessage(createAssistantMessage("first child"));
@@ -163,8 +167,8 @@ describe("SQLite migrations", () => {
 	it("pages entries by entry_seq cursor", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("one"));
 		await session.appendMessage(createAssistantMessage("two"));
@@ -180,8 +184,9 @@ describe("SQLite migrations", () => {
 	it("materializes session summary fields transactionally", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const env = new SqliteNodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepo({ env, databasePath });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const userId = await session.appendMessage(createUserMessage("one"));
 		await session.appendThinkingLevelChange("high");
@@ -203,7 +208,7 @@ describe("SQLite migrations", () => {
 		await session.appendSessionName("  My Session  ");
 		await session.appendLabel(userId, "checkpoint");
 
-		const db = await env.openSqlite(databasePath);
+		const db = await sqlite.open(databasePath);
 		try {
 			const row = await db.prepare("SELECT session_id, payload FROM session_materialized WHERE session_id = ?").get<{
 				session_id: string;

@@ -18,22 +18,6 @@
 			"types": "./dist/harness/session/sqlite/index.d.ts",
 			"import": "./dist/harness/session/sqlite/index.js"
 		},
-		"./sqlite/env/node": {
-			"types": "./dist/harness/session/sqlite/env/node.d.ts",
-			"import": "./dist/harness/session/sqlite/env/node.js"
-		},
-		"./sqlite/env/bun": {
-			"types": "./dist/harness/session/sqlite/env/bun.d.ts",
-			"import": "./dist/harness/session/sqlite/env/bun.js"
-		},
-		"./sqlite/env/better-sqlite3": {
-			"types": "./dist/harness/session/sqlite/env/better-sqlite3.d.ts",
-			"import": "./dist/harness/session/sqlite/env/better-sqlite3.js"
-		},
-		"./sqlite/env/sqlite3": {
-			"types": "./dist/harness/session/sqlite/env/sqlite3.d.ts",
-			"import": "./dist/harness/session/sqlite/env/sqlite3.js"
-		},
 		"./package.json": "./package.json"
 	},
 	"files": [
