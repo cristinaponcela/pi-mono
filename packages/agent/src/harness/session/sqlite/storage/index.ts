@@ -407,20 +407,34 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 	}
 
 	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
-		const afterEntrySeq = options?.afterEntrySeq ?? 0;
 		const limit = options?.limit;
-		const rows =
-			limit === undefined
-				? await this.db
-						.prepare(
-							"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq > ? ORDER BY entry_seq",
-						)
-						.all<SessionEntryRow>([this.metadata.id, afterEntrySeq])
-				: await this.db
-						.prepare(
-							"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq > ? ORDER BY entry_seq LIMIT ?",
-						)
-						.all<SessionEntryRow>([this.metadata.id, afterEntrySeq, limit]);
+		if (limit !== undefined) {
+			const beforeOrAtEntrySeq =
+				options?.afterEntrySeq ??
+				(
+					await this.db
+						.prepare("SELECT entry_seq FROM session_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1")
+						.get<{ entry_seq: number }>([this.metadata.id])
+				)?.entry_seq;
+			if (beforeOrAtEntrySeq === undefined) {
+				return [];
+			}
+			const rows = await this.db
+				.prepare(
+					"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq <= ? ORDER BY entry_seq DESC LIMIT ?",
+				)
+				.all<SessionEntryRow>([this.metadata.id, beforeOrAtEntrySeq, limit]);
+			const entries = (await decodeEntryRows(rows)).entries;
+			for (const entry of entries) {
+				this.byId.set(entry.id, entry);
+			}
+			return entries.reverse();
+		}
+		const rows = await this.db
+			.prepare(
+				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? ORDER BY entry_seq",
+			)
+			.all<SessionEntryRow>([this.metadata.id]);
 		const entries = (await decodeEntryRows(rows)).entries;
 		for (const entry of entries) {
 			this.byId.set(entry.id, entry);

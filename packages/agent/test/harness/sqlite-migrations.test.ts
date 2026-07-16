@@ -173,6 +173,7 @@ describe("SQLite migrations", () => {
 		expect((await session.getEntries({ limit: 2 })).map((entry) => entry.type)).toEqual(["message", "message"]);
 		expect((await session.getEntries({ afterEntrySeq: 2, limit: 2 })).map((entry) => entry.type)).toEqual([
 			"message",
+			"message",
 		]);
 	});
 
