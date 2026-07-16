@@ -312,7 +312,10 @@ export function sessionStatsFromMaterializedState(state: SessionMaterializedStat
 	};
 }
 
-export function materializedStateValues(sessionId: string, state: SessionMaterializedState): unknown[] {
+export function materializedStateValues(
+	sessionId: string,
+	state: SessionMaterializedState,
+): [sessionId: string, payload: string] {
 	return [sessionId, serializeSummary(state)];
 }
 

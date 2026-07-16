@@ -18,7 +18,7 @@ export async function getMaterializedBranchPathOrCompaction(
 		.prepare(
 			"SELECT entry_id, entry_seq FROM branch_entries WHERE session_id = ? AND branch_id = ? ORDER BY entry_seq",
 		)
-		.all<BranchEntryRow>([sessionId, branchId]);
+		.all<BranchEntryRow>(sessionId, branchId);
 	if (branchRows.length === 0) {
 		return [];
 	}
@@ -28,7 +28,7 @@ export async function getMaterializedBranchPathOrCompaction(
 		.prepare(
 			`SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND id IN (${placeholders})`,
 		)
-		.all<SessionEntryRow>([sessionId, ...entryIds]);
+		.all<SessionEntryRow>(sessionId, ...entryIds);
 	const entryRowsById = new Map(entryRows.map((row) => [row.id, row]));
 	const entries: SessionTreeEntry[] = [];
 	for (const branchRow of branchRows) {

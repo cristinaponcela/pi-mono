@@ -49,7 +49,7 @@ async function loadEntryRowsByIds(
 		.prepare(
 			`SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND id IN (${placeholders})`,
 		)
-		.all<SessionEntryRow>([sessionId, ...entryIds]);
+		.all<SessionEntryRow>(sessionId, ...entryIds);
 	return new Map(rows.map((row) => [row.id, row]));
 }
 
@@ -60,7 +60,7 @@ async function loadActiveBranchId(db: SqliteDatabase, sessionId: string): Promis
 		.prepare(
 			"SELECT branch_id FROM branch_entries WHERE session_id = ? ORDER BY entry_seq DESC, branch_id DESC LIMIT 1",
 		)
-		.get<{ branch_id: string }>([sessionId]);
+		.get<{ branch_id: string }>(sessionId);
 	return row?.branch_id ?? null;
 }
 
@@ -69,10 +69,10 @@ async function hasExistingChild(db: SqliteDatabase, sessionId: string, parentId:
 		parentId === null
 			? await db
 					.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND parent_id IS NULL LIMIT 1")
-					.get<{ found: number }>([sessionId])
+					.get<{ found: number }>(sessionId)
 			: await db
 					.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND parent_id = ? LIMIT 1")
-					.get<{ found: number }>([sessionId, parentId]);
+					.get<{ found: number }>(sessionId, parentId);
 	return row !== undefined;
 }
 
@@ -87,19 +87,19 @@ async function loadSqliteStorage(
 }> {
 	const row = await db
 		.prepare("SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions WHERE id = ?")
-		.get<SessionRow>([sessionId]);
+		.get<SessionRow>(sessionId);
 	if (!row) throw new SessionError("not_found", `Session not found: ${sessionId}`);
 
 	const leafId = row.active_leaf_id;
 	const materializedRow = await db
 		.prepare("SELECT session_id, payload FROM session_materialized WHERE session_id = ?")
-		.get<SessionMaterializedRow>([sessionId]);
+		.get<SessionMaterializedRow>(sessionId);
 	if (!materializedRow) throw invalidSession(`missing materialized row for session ${sessionId}`);
 	const entryMaterializedRows = await db
 		.prepare(
 			"SELECT session_id, entry_seq, type, payload FROM entry_materialized WHERE session_id = ? ORDER BY entry_seq, type",
 		)
-		.all<EntryMaterializedRow>([sessionId]);
+		.all<EntryMaterializedRow>(sessionId);
 	return {
 		row,
 		leafId,
@@ -154,7 +154,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			if (!entryRow) throw invalidSession(`missing entry row for session ${this.metadata.id} entry ${entry.id}`);
 			await this.db
 				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-				.run([this.metadata.id, branchId, entry.id, entryRow.entry_seq]);
+				.run(this.metadata.id, branchId, entry.id, entryRow.entry_seq);
 		}
 		this.activeBranchId = branchId;
 	}
@@ -170,11 +170,11 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		}
 		const entryRow = await this.db
 			.prepare("SELECT entry_seq FROM session_entries WHERE session_id = ? AND id = ?")
-			.get<{ entry_seq: number }>([this.metadata.id, entryId]);
+			.get<{ entry_seq: number }>(this.metadata.id, entryId);
 		if (!entryRow) throw invalidSession(`missing entry row for session ${this.metadata.id} entry ${entryId}`);
 		await this.db
 			.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-			.run([this.metadata.id, this.activeBranchId, entryId, entryRow.entry_seq]);
+			.run(this.metadata.id, this.activeBranchId, entryId, entryRow.entry_seq);
 	}
 
 	private constructor(
@@ -221,20 +221,18 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			.prepare(
 				"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id, active_leaf_id) VALUES (?, ?, ?, ?, ?, ?)",
 			)
-			.run([
+			.run(
 				options.sessionId,
 				createdAt,
 				options.metadata === undefined ? null : JSON.stringify(options.metadata),
 				options.cwd,
 				options.parentSessionId ?? null,
 				null,
-			]);
-		await db
-			.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)")
-			.run([options.sessionId, 1]);
+			);
+		await db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(options.sessionId, 1);
 		await db
 			.prepare("INSERT INTO session_materialized (session_id, payload) VALUES (?, ?)")
-			.run(materializedStateValues(options.sessionId, createEmptyMaterializedState()));
+			.run(...materializedStateValues(options.sessionId, createEmptyMaterializedState()));
 		return new SqliteSessionStorage(
 			db,
 			{
@@ -279,7 +277,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			const id = generateEntryId(this.byId);
 			const existing = await this.db
 				.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND id = ? LIMIT 1")
-				.get<{ found: number }>([this.metadata.id, id]);
+				.get<{ found: number }>(this.metadata.id, id);
 			if (!existing) return id;
 		}
 		return uuidv7();
@@ -302,29 +300,21 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 					.prepare(
 						"INSERT INTO session_entries (session_id, id, entry_seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
 					)
-					.run([
-						this.metadata.id,
-						entry.id,
-						nextSeq,
-						entry.parentId,
-						entry.type,
-						entry.timestamp,
-						encoded.payload,
-					]);
+					.run(this.metadata.id, entry.id, nextSeq, entry.parentId, entry.type, entry.timestamp, encoded.payload);
 				await advanceSequence(this.db, this.metadata.id, nextSeq);
 				await this.db
 					.prepare("UPDATE session_materialized SET payload = ? WHERE session_id = ?")
-					.run([serializeSummary(this.materializedState), this.metadata.id]);
+					.run(serializeSummary(this.materializedState), this.metadata.id);
 				for (const materializedEntry of entryMaterializedValues(entry)) {
 					await this.db
 						.prepare("INSERT INTO entry_materialized (session_id, entry_seq, type, payload) VALUES (?, ?, ?, ?)")
-						.run([this.metadata.id, nextSeq, materializedEntry.type, materializedEntry.payload]);
+						.run(this.metadata.id, nextSeq, materializedEntry.type, materializedEntry.payload);
 				}
 				this.byId.set(entry.id, entry);
 				this.currentLeafId = leafIdAfterEntry(entry);
 				await this.db
 					.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?")
-					.run([this.currentLeafId, this.metadata.id]);
+					.run(this.currentLeafId, this.metadata.id);
 				if (entry.type === "leaf") {
 					this.activeBranchId = null;
 					await this.materializeBranch(entry.targetId);
@@ -351,7 +341,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			.prepare(
 				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND id = ?",
 			)
-			.get<SessionEntryRow>([this.metadata.id, id]);
+			.get<SessionEntryRow>(this.metadata.id, id);
 		if (!row) return undefined;
 		try {
 			const entry = decodeEntry(row);
@@ -369,7 +359,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			.prepare(
 				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND type = ? ORDER BY entry_seq",
 			)
-			.all<SessionEntryRow>([this.metadata.id, type]);
+			.all<SessionEntryRow>(this.metadata.id, type);
 		const entries: Array<Extract<SessionTreeEntry, { type: TType }>> = [];
 		for (const row of rows) {
 			try {
@@ -414,7 +404,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				(
 					await this.db
 						.prepare("SELECT entry_seq FROM session_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1")
-						.get<{ entry_seq: number }>([this.metadata.id])
+						.get<{ entry_seq: number }>(this.metadata.id)
 				)?.entry_seq;
 			if (beforeOrAtEntrySeq === undefined) {
 				return [];
@@ -423,7 +413,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				.prepare(
 					"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq <= ? ORDER BY entry_seq DESC LIMIT ?",
 				)
-				.all<SessionEntryRow>([this.metadata.id, beforeOrAtEntrySeq, limit]);
+				.all<SessionEntryRow>(this.metadata.id, beforeOrAtEntrySeq, limit);
 			const entries = (await decodeEntryRows(rows)).entries;
 			for (const entry of entries) {
 				this.byId.set(entry.id, entry);
@@ -434,7 +424,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			.prepare(
 				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? ORDER BY entry_seq",
 			)
-			.all<SessionEntryRow>([this.metadata.id]);
+			.all<SessionEntryRow>(this.metadata.id);
 		const entries = (await decodeEntryRows(rows)).entries;
 		for (const entry of entries) {
 			this.byId.set(entry.id, entry);

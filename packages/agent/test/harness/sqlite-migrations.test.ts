@@ -94,16 +94,16 @@ describe("SQLite migrations", () => {
 		try {
 			const row = await db
 				.prepare("SELECT active_leaf_id FROM sessions WHERE id = ?")
-				.get<{ active_leaf_id: string | null }>(["session-1"]);
+				.get<{ active_leaf_id: string | null }>("session-1");
 			expect(row?.active_leaf_id).toBe(rootId);
 			const latestBranchRow = await db
 				.prepare(
 					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1",
 				)
-				.get<{ branch_id: string; entry_id: string; entry_seq: number }>(["session-1"]);
+				.get<{ branch_id: string; entry_id: string; entry_seq: number }>("session-1");
 			const latestSessionEntry = await db
 				.prepare("SELECT id, type FROM session_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1")
-				.get<{ id: string; type: string }>(["session-1"]);
+				.get<{ id: string; type: string }>("session-1");
 			expect(latestSessionEntry?.type).toBe("leaf");
 			expect(latestBranchRow?.entry_id).toBe(latestSessionEntry?.id);
 		} finally {
@@ -133,7 +133,7 @@ describe("SQLite migrations", () => {
 				.prepare(
 					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY branch_id, entry_seq",
 				)
-				.all<{ branch_id: string; entry_id: string; entry_seq: number }>(["session-1"]);
+				.all<{ branch_id: string; entry_id: string; entry_seq: number }>("session-1");
 			const branchIds = [...new Set(branchRows.map((row) => row.branch_id))];
 			expect(branchIds).toHaveLength(3);
 			expect(branchRows.filter((row) => row.entry_id === rootId)).toHaveLength(3);
@@ -213,7 +213,7 @@ describe("SQLite migrations", () => {
 			const row = await db.prepare("SELECT session_id, payload FROM session_materialized WHERE session_id = ?").get<{
 				session_id: string;
 				payload: string;
-			}>(["session-1"]);
+			}>("session-1");
 			expect(row).toBeDefined();
 			expect(row?.session_id).toBe("session-1");
 			expect(JSON.parse(row?.payload ?? "null")).toMatchObject({
@@ -235,7 +235,7 @@ describe("SQLite migrations", () => {
 					entry_seq: number;
 					type: string;
 					payload: string;
-				}>(["session-1"]);
+				}>("session-1");
 			expect(
 				entryRows.some((entryRow) => entryRow.type === "label" && JSON.parse(entryRow.payload).targetId === userId),
 			).toBe(true);

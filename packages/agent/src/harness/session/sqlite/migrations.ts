@@ -43,7 +43,7 @@ export async function applyMigrations(db: SqliteDatabase): Promise<void> {
 			await db.exec(migration.sql);
 			await db
 				.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
-				.run([migration.id, new Date().toISOString()]);
+				.run(migration.id, new Date().toISOString());
 		});
 		applied.add(migration.id);
 	}

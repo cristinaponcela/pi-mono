@@ -107,7 +107,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 						.prepare(
 							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
 						)
-						.all<SessionRow>([options.cwd])
+						.all<SessionRow>(options.cwd)
 				: await db
 						.prepare(
 							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions ORDER BY created_at DESC",
@@ -123,12 +123,12 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 		const db = await this.openDatabase();
 		try {
 			await db.transaction(async () => {
-				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run([metadata.id]);
-				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run([metadata.id]);
-				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run([metadata.id]);
-				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run([metadata.id]);
-				await db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run([metadata.id]);
-				const result = await db.prepare("DELETE FROM sessions WHERE id = ?").run([metadata.id]);
+				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run(metadata.id);
+				const result = await db.prepare("DELETE FROM sessions WHERE id = ?").run(metadata.id);
 				if (result.changes === 0) {
 					throw new SessionError("not_found", `Session not found: ${metadata.id}`);
 				}

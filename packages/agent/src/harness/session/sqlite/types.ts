@@ -10,9 +10,9 @@ export interface SqliteRunResult {
 
 /** Prepared SQLite statement capability used by the SQLite session backend. */
 export interface SqliteStatement {
-	run(params?: unknown[]): Promise<SqliteRunResult>;
-	get<TRow extends object>(params?: unknown[]): Promise<TRow | undefined>;
-	all<TRow extends object>(params?: unknown[]): Promise<TRow[]>;
+	run(...params: unknown[]): Promise<SqliteRunResult>;
+	get<TRow extends object>(...params: unknown[]): Promise<TRow | undefined>;
+	all<TRow extends object>(...params: unknown[]): Promise<TRow[]>;
 }
 
 /** SQLite database capability used by the SQLite session backend. */

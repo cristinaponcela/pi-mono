@@ -7,6 +7,12 @@ import type {
 	SqliteStatement,
 } from "@earendil-works/pi-agent-core/sqlite";
 
+function isNamedParameters(value: unknown): value is Record<string, SQLInputValue> {
+	if (value === null || typeof value !== "object") return false;
+	if (Array.isArray(value) || ArrayBuffer.isView(value)) return false;
+	return true;
+}
+
 class NodeSqliteStatement implements SqliteStatement {
 	private readonly statement: ReturnType<DatabaseSync["prepare"]>;
 
@@ -14,23 +20,33 @@ class NodeSqliteStatement implements SqliteStatement {
 		this.statement = statement;
 	}
 
-	async run(params?: unknown[]): Promise<SqliteRunResult> {
-		const sqliteParams = params as SQLInputValue[] | undefined;
-		const result = sqliteParams ? this.statement.run(...sqliteParams) : this.statement.run();
+	async run(...params: unknown[]): Promise<SqliteRunResult> {
+		const [first, ...rest] = params;
+		const result = isNamedParameters(first)
+			? this.statement.run(first, ...(rest as SQLInputValue[]))
+			: this.statement.run(...(params as SQLInputValue[]));
 		return {
 			changes: Number(result.changes),
 			lastInsertRowid: result.lastInsertRowid === undefined ? undefined : Number(result.lastInsertRowid),
 		};
 	}
 
-	async get<TRow extends object>(params?: unknown[]): Promise<TRow | undefined> {
-		const sqliteParams = params as SQLInputValue[] | undefined;
-		return (sqliteParams ? this.statement.get(...sqliteParams) : this.statement.get()) as TRow | undefined;
+	async get<TRow extends object>(...params: unknown[]): Promise<TRow | undefined> {
+		const [first, ...rest] = params;
+		return (
+			isNamedParameters(first)
+				? this.statement.get(first, ...(rest as SQLInputValue[]))
+				: this.statement.get(...(params as SQLInputValue[]))
+		) as TRow | undefined;
 	}
 
-	async all<TRow extends object>(params?: unknown[]): Promise<TRow[]> {
-		const sqliteParams = params as SQLInputValue[] | undefined;
-		return (sqliteParams ? this.statement.all(...sqliteParams) : this.statement.all()) as TRow[];
+	async all<TRow extends object>(...params: unknown[]): Promise<TRow[]> {
+		const [first, ...rest] = params;
+		return (
+			isNamedParameters(first)
+				? this.statement.all(first, ...(rest as SQLInputValue[]))
+				: this.statement.all(...(params as SQLInputValue[]))
+		) as TRow[];
 	}
 }
 
