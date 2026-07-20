@@ -1,6 +1,6 @@
+import { uuidv7 } from "@earendil-works/pi-ai";
 import type { LeafEntry, SessionEntryCursorOptions, SessionStorage, SessionTreeEntry } from "../../../types.ts";
 import { SessionError } from "../../../types.ts";
-import { uuidv7 } from "../../uuid.ts";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
 import { getMaterializedBranchPathOrCompaction } from "./branch-entries.ts";
 import { decodeEntry, encodeEntry, type SessionEntryRow } from "./session-entries.ts";
@@ -291,6 +291,9 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			modelThinkingConfigs: [...this.materializedState.modelThinkingConfigs],
 			currentModel: this.materializedState.currentModel ? { ...this.materializedState.currentModel } : null,
 		};
+		const previousById = new Map(this.byId);
+		const previousLeafId = this.currentLeafId;
+		const previousActiveBranchId = this.activeBranchId;
 		try {
 			applyEntryToMaterializedState(this.materializedState, entry);
 			await this.db.transaction(async () => {
@@ -329,6 +332,9 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		} catch (error) {
 			this.materializedState = previousMaterializedState;
 			this.labelsById = previousMaterializedState.labelsById;
+			this.byId = previousById;
+			this.currentLeafId = previousLeafId;
+			this.activeBranchId = previousActiveBranchId;
 			if (error instanceof SessionError) throw error;
 			throw new SessionError("storage", `Failed to append SQLite session entry ${entry.id}`);
 		}
