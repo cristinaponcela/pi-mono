@@ -1,4 +1,4 @@
-import type { Session } from "../../types.ts";
+import type { Session, SessionStorage, SessionTreeEntry } from "../../types.ts";
 import { SessionError } from "../../types.ts";
 import { createSessionId, getEntriesToFork, getFileSystemResultOrThrow, toSession } from "../repo-utils.ts";
 import { applyMigrations } from "./migrations.ts";
@@ -26,6 +26,13 @@ async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
 	await db.exec("PRAGMA journal_mode=WAL");
 	await db.exec("PRAGMA synchronous=FULL");
 	await db.exec("PRAGMA busy_timeout=5000");
+}
+
+async function cleanupSessionStorage(storage: SessionStorage): Promise<void> {
+	const maybeClosable = storage as SessionStorage & { cleanup?: () => Promise<void> };
+	if (typeof maybeClosable.cleanup === "function") {
+		await maybeClosable.cleanup();
+	}
 }
 
 export class SqliteSessionRepo implements SqliteSessionRepoApi {
@@ -74,14 +81,19 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 
 	async create(options: SqliteSessionCreateOptions): Promise<Session<SqliteSessionMetadata>> {
 		const db = await this.openDatabase();
-		const id = options.id ?? createSessionId();
-		const storage = await SqliteSessionStorage.create(db, await this.getDatabasePath(), {
-			cwd: options.cwd,
-			sessionId: id,
-			parentSessionId: options.parentSessionId,
-			metadata: options.metadata,
-		});
-		return toSession(storage);
+		try {
+			const id = options.id ?? createSessionId();
+			const storage = await SqliteSessionStorage.create(db, await this.getDatabasePath(), {
+				cwd: options.cwd,
+				sessionId: id,
+				parentSessionId: options.parentSessionId,
+				metadata: options.metadata,
+			});
+			return toSession(storage);
+		} catch (error) {
+			await db.close();
+			throw error;
+		}
 	}
 
 	async open(metadata: SqliteSessionMetadata): Promise<Session<SqliteSessionMetadata>> {
@@ -91,8 +103,13 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
 		}
 		const db = await this.openDatabase();
-		const storage = await SqliteSessionStorage.open(db, metadata);
-		return toSession(storage);
+		try {
+			const storage = await SqliteSessionStorage.open(db, metadata);
+			return toSession(storage);
+		} catch (error) {
+			await db.close();
+			throw error;
+		}
 	}
 
 	async list(options: SqliteSessionListOptions = {}): Promise<SqliteSessionMetadata[]> {
@@ -143,17 +160,28 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 		options: SqliteSessionCreateOptions & { entryId?: string; position?: "before" | "at"; id?: string },
 	): Promise<Session<SqliteSessionMetadata>> {
 		const source = await this.open(sourceMetadata);
-		const forkedEntries = await getEntriesToFork(source.getStorage(), options);
-		const id = options.id ?? createSessionId();
-		const storage = await SqliteSessionStorage.create(await this.openDatabase(), await this.getDatabasePath(), {
-			cwd: options.cwd,
-			sessionId: id,
-			parentSessionId: options.parentSessionId ?? sourceMetadata.id,
-			metadata: options.metadata ?? sourceMetadata.metadata,
-		});
-		for (const entry of forkedEntries) {
-			await storage.appendEntry(entry);
+		let forkedEntries: SessionTreeEntry[];
+		try {
+			forkedEntries = await getEntriesToFork(source.getStorage(), options);
+		} finally {
+			await cleanupSessionStorage(source.getStorage());
 		}
-		return toSession(storage);
+		const db = await this.openDatabase();
+		try {
+			const id = options.id ?? createSessionId();
+			const storage = await SqliteSessionStorage.create(db, await this.getDatabasePath(), {
+				cwd: options.cwd,
+				sessionId: id,
+				parentSessionId: options.parentSessionId ?? sourceMetadata.id,
+				metadata: options.metadata ?? sourceMetadata.metadata,
+			});
+			for (const entry of forkedEntries) {
+				await storage.appendEntry(entry);
+			}
+			return toSession(storage);
+		} catch (error) {
+			await db.close();
+			throw error;
+		}
 	}
 }

@@ -1,14 +1,66 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createNodeSqliteFactory } from "../../../sqlite-node/src/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { SqliteSessionRepo } from "../../src/harness/session/sqlite/index.ts";
+import {
+	applyMigrations,
+	type SqliteDatabase,
+	type SqliteDatabaseFactory,
+	type SqliteRunResult,
+	type SqliteSessionMetadata,
+	SqliteSessionRepo,
+	SqliteSessionStorage,
+	type SqliteStatement,
+} from "../../src/harness/session/sqlite/index.ts";
 import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
 
 function createTempDir(): string {
 	return mkdtempSync(join(tmpdir(), "pi-agent-sqlite-"));
+}
+
+class ThrowingStatement implements SqliteStatement {
+	private readonly onRun: () => Promise<SqliteRunResult>;
+
+	constructor(onRun: () => Promise<SqliteRunResult>) {
+		this.onRun = onRun;
+	}
+
+	async run(..._params: unknown[]): Promise<SqliteRunResult> {
+		return this.onRun();
+	}
+
+	async get<TRow extends object>(..._params: unknown[]): Promise<TRow | undefined> {
+		return undefined;
+	}
+
+	async all<TRow extends object>(..._params: unknown[]): Promise<TRow[]> {
+		return [];
+	}
+}
+
+class CountingDatabase implements SqliteDatabase {
+	closeCount = 0;
+	private readonly statementFactory: (sql: string) => SqliteStatement;
+
+	constructor(statementFactory: (sql: string) => SqliteStatement) {
+		this.statementFactory = statementFactory;
+	}
+
+	async exec(_sql: string): Promise<void> {}
+
+	prepare(sql: string): SqliteStatement {
+		return this.statementFactory(sql);
+	}
+
+	async transaction<T>(fn: () => Promise<T>): Promise<T> {
+		return fn();
+	}
+
+	async close(): Promise<void> {
+		this.closeCount += 1;
+	}
 }
 
 describe("SQLite migrations", () => {
@@ -179,6 +231,128 @@ describe("SQLite migrations", () => {
 			"message",
 			"message",
 		]);
+	});
+
+	it("closes the database when create fails after openDatabase succeeds", async () => {
+		const root = createTempDir();
+		const db = new CountingDatabase((sql) => {
+			if (sql.startsWith("INSERT INTO sessions")) {
+				return new ThrowingStatement(async () => {
+					throw new Error("insert failed");
+				});
+			}
+			return new ThrowingStatement(async () => ({ changes: 1 }));
+		});
+		const sqlite: SqliteDatabaseFactory = {
+			open: async () => db,
+		};
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
+
+		await expect(repo.create({ cwd: root, id: "session-1" })).rejects.toThrow("insert failed");
+		expect(db.closeCount).toBe(1);
+	});
+
+	it("closes the database when open fails after openDatabase succeeds", async () => {
+		const root = createTempDir();
+		const db = new CountingDatabase((sql) => {
+			if (sql.includes("FROM sessions WHERE id = ?")) {
+				return new ThrowingStatement(async () => ({ changes: 0 }));
+			}
+			return new ThrowingStatement(async () => ({ changes: 1 }));
+		});
+		const sqlite: SqliteDatabaseFactory = {
+			open: async () => db,
+		};
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
+		const metadata: SqliteSessionMetadata = {
+			id: "missing",
+			createdAt: new Date().toISOString(),
+			cwd: root,
+			path: join(root, "sessions.sqlite"),
+		};
+		writeFileSync(metadata.path, "");
+
+		await expect(repo.open(metadata)).rejects.toThrow("Session not found: missing");
+		expect(db.closeCount).toBe(1);
+	});
+
+	it("closes the source storage after fork reads its entries", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new SqliteSessionRepo({ env, sqlite: createNodeSqliteFactory(), databasePath });
+		let cleanupCount = 0;
+		const sourceStorage = {
+			async getEntries() {
+				return [];
+			},
+			async getPathToRootOrCompaction() {
+				return [];
+			},
+			async cleanup() {
+				cleanupCount += 1;
+			},
+		} as const;
+		const originalOpen = repo.open.bind(repo);
+		repo.open = async () =>
+			({
+				getStorage() {
+					return sourceStorage;
+				},
+			}) as never;
+
+		try {
+			await repo.fork(
+				{
+					id: "session-1",
+					createdAt: new Date().toISOString(),
+					cwd: root,
+					path: databasePath,
+				},
+				{ cwd: root, id: "session-2" },
+			);
+		} finally {
+			repo.open = originalOpen;
+		}
+
+		expect(cleanupCount).toBe(1);
+	});
+
+	it("restores in-memory state when appendEntry fails after mutating caches", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const sqlite = createNodeSqliteFactory();
+		const db = await sqlite.open(databasePath);
+		await applyMigrations(db);
+		const storage = await SqliteSessionStorage.create(db, databasePath, {
+			cwd: root,
+			sessionId: "session-1",
+		});
+		const originalPrepare = db.prepare.bind(db);
+		db.prepare = (sql: string) => {
+			if (sql.startsWith("UPDATE sessions SET active_leaf_id = ?")) {
+				return new ThrowingStatement(async () => {
+					throw new Error("active leaf update failed");
+				});
+			}
+			return originalPrepare(sql);
+		};
+
+		await expect(
+			storage.appendEntry({
+				type: "message",
+				id: "root",
+				parentId: null,
+				timestamp: new Date().toISOString(),
+				message: createUserMessage("root"),
+			}),
+		).rejects.toMatchObject({ code: "storage" });
+		expect(await storage.getLeafId()).toBeNull();
+		expect(await storage.getEntry("root")).toBeUndefined();
+		expect(await storage.getEntries()).toEqual([]);
+		await db.close();
 	});
 
 	it("materializes session summary fields transactionally", async () => {
