@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the orchestrator workspace package and internal server references to server.
+
 ## [0.80.10] - 2026-07-16
 
 ## [0.80.9] - 2026-07-16
