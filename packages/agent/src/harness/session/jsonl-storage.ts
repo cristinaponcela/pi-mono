@@ -312,14 +312,31 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		let totalTokens = 0;
 		let costTotal = 0;
 		for (const entry of this.entries) {
-			if (entry.type !== "message") continue;
-			messageCount += 1;
-			const message = entry.message;
-			if (message.role !== "assistant") continue;
-			cachedTokens += message.usage.cacheRead;
-			uncachedTokens += message.usage.input + message.usage.cacheWrite;
-			totalTokens += message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite;
-			costTotal += message.usage.cost.total;
+			if (entry.type === "message") {
+				messageCount += 1;
+			}
+			const usage =
+				entry.type === "message"
+					? entry.message.role === "assistant"
+						? entry.message.usage
+						: undefined
+					: entry.type === "compaction" || entry.type === "branch_summary"
+						? entry.usage
+						: undefined;
+			if (
+				!usage ||
+				typeof usage.input !== "number" ||
+				typeof usage.output !== "number" ||
+				typeof usage.cacheRead !== "number" ||
+				typeof usage.cacheWrite !== "number" ||
+				typeof usage.cost?.total !== "number"
+			) {
+				continue;
+			}
+			cachedTokens += usage.cacheRead;
+			uncachedTokens += usage.input + usage.cacheWrite;
+			totalTokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+			costTotal += usage.cost.total;
 		}
 		return {
 			messageCount,

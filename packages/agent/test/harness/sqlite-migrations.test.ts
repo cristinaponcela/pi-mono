@@ -379,6 +379,25 @@ describe("SQLite migrations", () => {
 			},
 		};
 		await session.appendMessage(assistant);
+		await session.appendCompaction("summary", userId, 200, undefined, false, {
+			input: 1,
+			output: 2,
+			cacheRead: 3,
+			cacheWrite: 4,
+			totalTokens: 10,
+			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.04, total: 0.1 },
+		});
+		await session.moveTo(userId, {
+			summary: "branch summary",
+			usage: {
+				input: 5,
+				output: 6,
+				cacheRead: 7,
+				cacheWrite: 8,
+				totalTokens: 26,
+				cost: { input: 0.05, output: 0.06, cacheRead: 0.07, cacheWrite: 0.08, total: 0.26 },
+			},
+		});
 		await session.appendSessionName("  My Session  ");
 		await session.appendLabel(userId, "checkpoint");
 
@@ -393,10 +412,10 @@ describe("SQLite migrations", () => {
 			expect(JSON.parse(row?.payload ?? "null")).toMatchObject({
 				name: "My Session",
 				messageCount: 2,
-				cachedTokens: 40,
-				uncachedTokens: 110,
-				totalTokens: 175,
-				costTotal: 0.37,
+				cachedTokens: 50,
+				uncachedTokens: 128,
+				totalTokens: 211,
+				costTotal: 0.73,
 				currentModel: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
 				currentThinkingLevel: "high",
 			});

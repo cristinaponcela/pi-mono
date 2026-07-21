@@ -174,9 +174,27 @@ export function applyEntryToMaterializedState(state: SessionMaterializedState, e
 			}
 			break;
 		}
-		case "active_tools_change":
 		case "compaction":
-		case "branch_summary":
+		case "branch_summary": {
+			const usage = entry.usage;
+			if (
+				!isRecord(usage) ||
+				!isRecord(usage.cost) ||
+				typeof usage.input !== "number" ||
+				typeof usage.output !== "number" ||
+				typeof usage.cacheRead !== "number" ||
+				typeof usage.cacheWrite !== "number" ||
+				typeof usage.cost.total !== "number"
+			) {
+				break;
+			}
+			state.cachedTokens += usage.cacheRead;
+			state.uncachedTokens += usage.input + usage.cacheWrite;
+			state.totalTokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+			state.costTotal += usage.cost.total;
+			break;
+		}
+		case "active_tools_change":
 		case "custom":
 		case "custom_message":
 		case "leaf":
