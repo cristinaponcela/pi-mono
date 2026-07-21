@@ -9,7 +9,6 @@ import type {
 } from "../types.ts";
 import { SessionError, toError } from "../types.ts";
 import { getFileSystemResultOrThrow } from "./repo-utils.ts";
-import { uuidv7 } from "./uuid.ts";
 
 type JsonlSessionStorageFileSystem = Pick<FileSystem, "readTextFile" | "readTextLines" | "writeFile" | "appendFile">;
 

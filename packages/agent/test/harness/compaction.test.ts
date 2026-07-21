@@ -650,6 +650,7 @@ describe("harness compaction", () => {
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
+			retainedTail: messages,
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};

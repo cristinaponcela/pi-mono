@@ -68,7 +68,7 @@ async function runSessionSuite(
 			await session.appendMessage(createAssistantMessage("two"));
 			const user2 = await session.appendMessage(createUserMessage("three"));
 			await session.appendMessage(createAssistantMessage("four"));
-			await session.appendCompaction("summary", user2, 1234, undefined, undefined, [
+			await session.appendCompaction("summary", user2, 1234, undefined, undefined, undefined, [
 				createUserMessage("three"),
 				createAssistantMessage("four"),
 			]);
