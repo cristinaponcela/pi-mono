@@ -2,10 +2,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createNodeSqliteFactory } from "../../../sqlite-node/src/index.ts";
-import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import {
 	applyMigrations,
+	createNodeSqliteFactory,
 	type SqliteDatabase,
 	type SqliteDatabaseFactory,
 	type SqliteRunResult,
@@ -13,7 +12,8 @@ import {
 	SqliteSessionRepo,
 	SqliteSessionStorage,
 	type SqliteStatement,
-} from "../../src/harness/session/sqlite/index.ts";
+} from "../../../storage/sqlite-node/src/index.ts";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
 
 function createTempDir(): string {

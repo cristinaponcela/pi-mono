@@ -1,6 +1,11 @@
+import type {
+	LeafEntry,
+	SessionEntryCursorOptions,
+	SessionStorage,
+	SessionTreeEntry,
+} from "@earendil-works/pi-agent-core";
+import { SessionError } from "@earendil-works/pi-agent-core";
 import { uuidv7 } from "@earendil-works/pi-ai";
-import type { LeafEntry, SessionEntryCursorOptions, SessionStorage, SessionTreeEntry } from "../../../types.ts";
-import { SessionError } from "../../../types.ts";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
 import { getMaterializedBranchPathOrCompaction } from "./branch-entries.ts";
 import { decodeEntry, encodeEntry, type SessionEntryRow } from "./session-entries.ts";

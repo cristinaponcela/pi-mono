@@ -14,10 +14,6 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
-		"./sqlite": {
-			"types": "./dist/harness/session/sqlite/index.d.ts",
-			"import": "./dist/harness/session/sqlite/index.js"
-		},
 		"./package.json": "./package.json"
 	},
 	"files": [
@@ -26,7 +22,7 @@
 	],
 	"scripts": {
 		"clean": "node ./scripts/prepare-dist.mjs clean",
-		"build": "tsgo -p tsconfig.build.json && node ./scripts/prepare-dist.mjs copy-sqlite-migrations",
+		"build": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 		"test:harness": "vitest --run --config vitest.harness.config.ts",
 		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage",

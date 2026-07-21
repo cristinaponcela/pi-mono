@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createNodeSqliteFactory } from "../../../sqlite-node/src/index.ts";
+import { createNodeSqliteFactory } from "../../../storage/sqlite-node/src/index.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 describe("sqlite-node adapter", () => {

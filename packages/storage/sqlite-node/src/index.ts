@@ -1,11 +1,6 @@
 import type { SQLInputValue } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
-import type {
-	SqliteDatabase,
-	SqliteDatabaseFactory,
-	SqliteRunResult,
-	SqliteStatement,
-} from "@earendil-works/pi-agent-core/sqlite";
+import type { SqliteDatabase, SqliteDatabaseFactory, SqliteRunResult, SqliteStatement } from "./sqlite/types.ts";
 
 function isNamedParameters(value: unknown): value is Record<string, SQLInputValue> {
 	if (value === null || typeof value !== "object") return false;
@@ -97,3 +92,6 @@ export function createNodeSqliteFactory(): SqliteDatabaseFactory {
 		},
 	};
 }
+
+// Re-export the SQLite session storage backend and types so this package is a complete node-sqlite backend.
+export * from "./sqlite/index.ts";

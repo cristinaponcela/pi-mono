@@ -1,4 +1,4 @@
-import type { SessionTreeEntry, SessionTreeEntryBase } from "../../../types.ts";
+import type { SessionTreeEntry, SessionTreeEntryBase } from "@earendil-works/pi-agent-core";
 import { invalidEntry, isRecord } from "./shared.ts";
 
 export interface SessionEntryRow {

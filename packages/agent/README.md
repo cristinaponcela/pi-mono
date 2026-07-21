@@ -10,13 +10,7 @@ npm install @earendil-works/pi-agent-core
 
 ### SQLite session backends
 
-The core SQLite session backend lives under `@earendil-works/pi-agent-core/sqlite` and accepts a runtime-specific SQLite factory.
-
-Runtime adapters live in separate packages so the core package does not pull in runtime builtins or native SQLite dependencies by default.
-
-Current adapter package:
-
-- `@earendil-works/pi-agent-sqlite-node`
+The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@earendil-works/pi-agent-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other storage backends to ship as their own packages in the future.
 
 ## Quick Start
 

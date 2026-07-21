@@ -1,4 +1,4 @@
-import { SessionError } from "../../../types.ts";
+import { SessionError } from "@earendil-works/pi-agent-core";
 import type { SqliteSessionMetadata } from "../types.ts";
 
 export interface SessionRow {
