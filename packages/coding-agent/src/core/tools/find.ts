@@ -180,10 +180,7 @@ export function createFindToolDefinition(
 							}
 
 							// Relativize paths against the search root for stable output.
-							const relativized = results.map((p) => {
-								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
-								return toPosixPath(path.relative(searchPath, p));
-							});
+							const relativized = results.map((p) => toPosixPath(path.relative(searchPath, p)));
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
@@ -238,7 +235,7 @@ export function createFindToolDefinition(
 							current = parent;
 						}
 						if (!insideGitRepo) args.push("--no-require-git");
-						args.push("--max-results", String(effectiveLimit));
+						args.push("--max-results", String(effectiveLimit + 1));
 
 						// fd --glob matches against the basename unless --full-path is set; in --full-path
 						// mode it matches against the absolute candidate path, so a path-containing
@@ -309,17 +306,19 @@ export function createFindToolDefinition(
 								const line = rawLine.replace(/\r$/, "").trim();
 								if (!line) continue;
 								const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
-								let relativePath = line;
-								if (line.startsWith(searchPath)) {
-									relativePath = line.slice(searchPath.length + 1);
-								} else {
-									relativePath = path.relative(searchPath, line);
-								}
+								let relativePath = path.relative(searchPath, line);
 								if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
 								relativized.push(toPosixPath(relativePath));
 							}
 
-							const resultLimitReached = relativized.length >= effectiveLimit;
+							// We requested effectiveLimit+1 results to distinguish "exactly N matches"
+							// from "truncated at N". If we got more than effectiveLimit, there are
+							// additional results beyond the limit.
+							const resultLimitReached = relativized.length > effectiveLimit;
+							if (resultLimitReached) {
+								// Trim the extra result(s) used for detection
+								relativized.length = effectiveLimit;
+							}
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;

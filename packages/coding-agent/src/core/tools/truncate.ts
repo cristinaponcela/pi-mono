@@ -272,5 +272,15 @@ export function truncateLine(
 	if (line.length <= maxChars) {
 		return { text: line, wasTruncated: false };
 	}
-	return { text: `${line.slice(0, maxChars)}... [truncated]`, wasTruncated: true };
+	let cut = maxChars;
+	// Avoid splitting a surrogate pair (emoji etc.) at the boundary.
+	// If the character at `cut` is a low surrogate, the preceding high
+	// surrogate at `cut - 1` would be orphaned — back up by one.
+	if (cut > 0) {
+		const code = line.charCodeAt(cut);
+		if (code >= 0xDC00 && code <= 0xDFFF) {
+			cut -= 1;
+		}
+	}
+	return { text: `${line.slice(0, cut)}... [truncated]`, wasTruncated: true };
 }
