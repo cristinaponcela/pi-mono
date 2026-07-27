@@ -86,8 +86,16 @@ describe("credential print commands", () => {
 			args: ["--provider", "openai"],
 		});
 		expect(parseCredentialPrintCommand(["auth", "print-bearer-token"])).toMatchObject({ kind: "bearer_token" });
+		expect(parseCredentialPrintCommand(["auth", "print-bearer-token", "--min-expiry", "30m"])).toEqual({
+			kind: "bearer_token",
+			args: [],
+			minExpiryMs: 30 * 60_000,
+		});
+		expect(() => parseCredentialPrintCommand(["auth", "print-api-key", "--min-expiry", "30m"])).toThrow(
+			"only supported by print-bearer-token",
+		);
 		expect(isCredentialPrintHelp(["auth", "--help"])).toBe(true);
-		expect(() => parseCredentialPrintCommand(["auth", "check"])).toThrow(CredentialPrintError);
+		expect(() => parseCredentialPrintCommand(["auth", "unknown"])).toThrow(CredentialPrintError);
 		await expect(resolveCredentialForPrint(parseArgs([]), runtime, "api_key")).rejects.toThrow("requires --model");
 		await expect(
 			resolveCredentialForPrint(parseArgs(["--provider", "openai-codex", "--model", "gpt-5.5"]), runtime, "api_key"),

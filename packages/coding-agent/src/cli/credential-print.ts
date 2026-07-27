@@ -5,9 +5,12 @@ import type { Args } from "./args.ts";
 
 export type CredentialPrintKind = "api_key" | "bearer_token";
 
+const DEFAULT_BEARER_TOKEN_MIN_EXPIRY_MS = 30 * 60_000;
+
 export interface CredentialPrintCommand {
 	kind: CredentialPrintKind;
 	args: string[];
+	minExpiryMs?: number;
 }
 
 export class CredentialPrintError extends Error {}
@@ -21,25 +24,43 @@ export function isCredentialPrintHelp(args: string[]): boolean {
 export function printCredentialPrintHelp(): void {
 	console.log(`Usage:
   pi auth print-api-key --model <model> [--provider <provider>]
-  pi auth print-bearer-token --model <model> [--provider <provider>]
+  pi auth print-bearer-token --model <model> [--provider <provider>] [--min-expiry <duration>]
 
-Prints the configured credential alone on stdout. Provider inference uses configured credentials; specify --provider to select explicitly. Expired OAuth tokens are refreshed before printing.`);
+Prints the configured credential alone on stdout. Provider inference uses configured credentials; specify --provider to select explicitly. Bearer tokens have a 30-minute minimum expiry by default. --min-expiry accepts ms, s, m, or h (for example, 30m).`);
 }
 
 /** Parse the small, extensible `pi auth` command surface before normal startup. */
 export function parseCredentialPrintCommand(args: string[]): CredentialPrintCommand | undefined {
 	if (args[0] !== "auth") return undefined;
 
-	switch (args[1]) {
-		case "print-api-key":
-			return { kind: "api_key", args: args.slice(2) };
-		case "print-bearer-token":
-			return { kind: "bearer_token", args: args.slice(2) };
-		default:
-			throw new CredentialPrintError(
-				`Unknown auth command "${args[1] ?? ""}". Use "pi auth print-api-key" or "pi auth print-bearer-token".`,
-			);
+	const kind = args[1] === "print-api-key" ? "api_key" : args[1] === "print-bearer-token" ? "bearer_token" : undefined;
+	if (!kind) {
+		throw new CredentialPrintError(
+			`Unknown auth command "${args[1] ?? ""}". Use "pi auth print-api-key" or "pi auth print-bearer-token".`,
+		);
 	}
+
+	const commandArgs: string[] = [];
+	let minExpiryMs: number | undefined;
+	for (let index = 2; index < args.length; index++) {
+		if (args[index] !== "--min-expiry") {
+			commandArgs.push(args[index]);
+			continue;
+		}
+		if (kind !== "bearer_token") {
+			throw new CredentialPrintError("--min-expiry is only supported by print-bearer-token");
+		}
+		const value = args[++index];
+		const match = value ? /^(\d+)(ms|s|m|h)$/iu.exec(value) : undefined;
+		if (!match) {
+			throw new CredentialPrintError("--min-expiry must use a duration such as 30m or 1h");
+		}
+		const amount = Number(match[1]);
+		const unit = match[2];
+		minExpiryMs = amount * (unit === "ms" ? 1 : unit === "s" ? 1_000 : unit === "m" ? 60_000 : 3_600_000);
+	}
+
+	return minExpiryMs === undefined ? { kind, args: commandArgs } : { kind, args: commandArgs, minExpiryMs };
 }
 
 export function validateCredentialPrintArgs(args: Args): void {
@@ -58,12 +79,13 @@ export function validateCredentialPrintArgs(args: Args): void {
  * Resolve one request credential for a specific provider/model pair.
  *
  * This intentionally calls ModelRuntime.getAuth(), which refreshes and persists
- * expired OAuth credentials through the normal request-auth path.
+ * OAuth credentials with less than five minutes remaining through the normal request-auth path.
  */
 export async function resolveCredentialForPrint(
 	args: Args,
 	modelRuntime: ModelRuntime,
 	kind: CredentialPrintKind,
+	minExpiryMs?: number,
 ): Promise<string> {
 	validateCredentialPrintArgs(args);
 
@@ -96,7 +118,12 @@ export async function resolveCredentialForPrint(
 		if (kind === "api_key" && type === "oauth") continue;
 		if (kind === "bearer_token" && type !== "oauth") continue;
 
-		const auth = await modelRuntime.getAuth(model);
+		const auth = await modelRuntime.getAuth(
+			model,
+			kind === "bearer_token"
+				? { minOAuthValidityMs: minExpiryMs ?? DEFAULT_BEARER_TOKEN_MIN_EXPIRY_MS }
+				: undefined,
+		);
 		const authorization = Object.entries(auth?.auth.headers ?? {}).find(
 			([name]) => name.toLowerCase() === "authorization",
 		)?.[1];

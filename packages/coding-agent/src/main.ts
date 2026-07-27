@@ -156,7 +156,7 @@ async function runCredentialPrintCommand(args: string[]): Promise<boolean> {
 	try {
 		validateCredentialPrintArgs(parsed);
 		const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-		const credential = await resolveCredentialForPrint(parsed, modelRuntime, command.kind);
+		const credential = await resolveCredentialForPrint(parsed, modelRuntime, command.kind, command.minExpiryMs);
 		process.stdout.write(`${credential}\n`);
 	} catch (error) {
 		const message = error instanceof CredentialPrintError ? error.message : "Failed to resolve credential";
