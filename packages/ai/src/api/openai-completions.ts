@@ -138,6 +138,27 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 	);
 }
 
+function isTextDeltaContentBlock(item: unknown): item is { type: "text"; text: string } {
+	if (typeof item !== "object" || item === null) {
+		return false;
+	}
+	const block = item as Record<string, unknown>;
+	return block.type === "text" && typeof block.text === "string";
+}
+
+function extractTextDeltaContent(content: unknown): string {
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		return "";
+	}
+	return content
+		.filter(isTextDeltaContentBlock)
+		.map((block) => block.text)
+		.join("");
+}
+
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -466,17 +487,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				if (choice.delta) {
-					if (
-						choice.delta.content !== null &&
-						choice.delta.content !== undefined &&
-						choice.delta.content.length > 0
-					) {
+					const deltaFields = choice.delta as Record<string, unknown>;
+					const textDelta = extractTextDeltaContent(deltaFields.content);
+					if (textDelta.length > 0) {
 						const block = ensureTextBlock();
-						block.text += choice.delta.content;
+						block.text += textDelta;
 						stream.push({
 							type: "text_delta",
 							contentIndex: getContentIndex(block),
-							delta: choice.delta.content,
+							delta: textDelta,
 							partial: output,
 						});
 					}
@@ -486,7 +505,6 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					// Use the first non-empty reasoning field to avoid duplication
 					// (e.g., chutes.ai returns both reasoning_content and reasoning with same content)
 					const reasoningFields = ["reasoning_content", "reasoning", "reasoning_text"];
-					const deltaFields = choice.delta as Record<string, unknown>;
 					let foundReasoningField: string | null = null;
 					for (const field of reasoningFields) {
 						const value = deltaFields[field];
