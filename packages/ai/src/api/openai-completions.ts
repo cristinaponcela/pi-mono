@@ -138,7 +138,12 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 	);
 }
 
-function isTextDeltaContentBlock(item: unknown): item is { type: "text"; text: string } {
+type TextDeltaContentBlock = { type: "text"; text: string };
+type ReasoningSummaryTextPart = { type: "summary_text"; text: string };
+type ReasoningDeltaContentBlock = { type: "reasoning"; summary?: unknown };
+type ContentDelta = { type: "text"; delta: string } | { type: "thinking"; delta: string; thinkingSignature: string };
+
+function isTextDeltaContentBlock(item: unknown): item is TextDeltaContentBlock {
 	if (typeof item !== "object" || item === null) {
 		return false;
 	}
@@ -146,17 +151,54 @@ function isTextDeltaContentBlock(item: unknown): item is { type: "text"; text: s
 	return block.type === "text" && typeof block.text === "string";
 }
 
-function extractTextDeltaContent(content: unknown): string {
-	if (typeof content === "string") {
-		return content;
+function isReasoningSummaryTextPart(item: unknown): item is ReasoningSummaryTextPart {
+	if (typeof item !== "object" || item === null) {
+		return false;
 	}
-	if (!Array.isArray(content)) {
+	const part = item as Record<string, unknown>;
+	return part.type === "summary_text" && typeof part.text === "string";
+}
+
+function isReasoningDeltaContentBlock(item: unknown): item is ReasoningDeltaContentBlock {
+	if (typeof item !== "object" || item === null) {
+		return false;
+	}
+	return (item as Record<string, unknown>).type === "reasoning";
+}
+
+function extractReasoningSummaryText(summary: unknown): string {
+	if (!Array.isArray(summary)) {
 		return "";
 	}
-	return content
-		.filter(isTextDeltaContentBlock)
-		.map((block) => block.text)
-		.join("");
+	return summary
+		.filter(isReasoningSummaryTextPart)
+		.map((part) => part.text)
+		.join("\n\n");
+}
+
+function extractContentDeltas(content: unknown): ContentDelta[] {
+	if (typeof content === "string") {
+		return [{ type: "text", delta: content }];
+	}
+	if (!Array.isArray(content)) {
+		return [];
+	}
+
+	const deltas: ContentDelta[] = [];
+	for (const item of content) {
+		if (isTextDeltaContentBlock(item)) {
+			deltas.push({ type: "text", delta: item.text });
+			continue;
+		}
+		if (!isReasoningDeltaContentBlock(item)) {
+			continue;
+		}
+		const delta = extractReasoningSummaryText(item.summary);
+		if (delta.length > 0) {
+			deltas.push({ type: "thinking", delta, thinkingSignature: "reasoning" });
+		}
+	}
+	return deltas;
 }
 
 export interface OpenAICompletionsOptions extends StreamOptions {
@@ -384,6 +426,26 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 				return thinkingBlock;
 			};
+			const pushTextDelta = (delta: string) => {
+				const block = ensureTextBlock();
+				block.text += delta;
+				stream.push({
+					type: "text_delta",
+					contentIndex: getContentIndex(block),
+					delta,
+					partial: output,
+				});
+			};
+			const pushThinkingDelta = (delta: string, thinkingSignature: string) => {
+				const block = ensureThinkingBlock(thinkingSignature);
+				block.thinking += delta;
+				stream.push({
+					type: "thinking_delta",
+					contentIndex: getContentIndex(block),
+					delta,
+					partial: output,
+				});
+			};
 			const applyPendingReasoningDetail = (block: StreamingToolCallBlock) => {
 				if (!block.id) {
 					return;
@@ -488,16 +550,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 				if (choice.delta) {
 					const deltaFields = choice.delta as Record<string, unknown>;
-					const textDelta = extractTextDeltaContent(deltaFields.content);
-					if (textDelta.length > 0) {
-						const block = ensureTextBlock();
-						block.text += textDelta;
-						stream.push({
-							type: "text_delta",
-							contentIndex: getContentIndex(block),
-							delta: textDelta,
-							partial: output,
-						});
+					for (const contentDelta of extractContentDeltas(deltaFields.content)) {
+						if (contentDelta.type === "text") {
+							pushTextDelta(contentDelta.delta);
+						} else {
+							pushThinkingDelta(contentDelta.delta, contentDelta.thinkingSignature);
+						}
 					}
 
 					// Some endpoints return reasoning in reasoning_content (llama.cpp),
@@ -521,14 +579,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 								model.provider === "opencode-go" && foundReasoningField === "reasoning"
 									? "reasoning_content"
 									: foundReasoningField;
-							const block = ensureThinkingBlock(thinkingSignature);
-							block.thinking += delta;
-							stream.push({
-								type: "thinking_delta",
-								contentIndex: getContentIndex(block),
-								delta,
-								partial: output,
-							});
+							pushThinkingDelta(delta, thinkingSignature);
 						}
 					}
 
