@@ -219,7 +219,9 @@ export function createWriteToolDefinition(
 				throwIfAborted();
 
 				return {
-					content: [{ type: "text", text: `Successfully wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${path}` }],
+					content: [
+						{ type: "text", text: `Successfully wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${path}` },
+					],
 					details: undefined,
 				};
 			});

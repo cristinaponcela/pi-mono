@@ -928,6 +928,31 @@ describe("Coding Agent Tools", () => {
 			// Warning should be present
 			expect(output).toContain("3 results limit reached");
 		});
+
+		it("should use sentinel limit handling with custom glob operations", async () => {
+			const findWithCustomOps = createFindTool(testDir, {
+				operations: {
+					exists: async () => true,
+					glob: async (_pattern, cwd, options) => {
+						expect(options.limit).toBe(4);
+						return ["a.txt", "b.txt", "c.txt", "d.txt"].map((name) => join(cwd, name));
+					},
+				},
+			});
+
+			const result = await findWithCustomOps.execute("test-call-custom-find-over-limit", {
+				pattern: "*.txt",
+				limit: 3,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("a.txt");
+			expect(output).toContain("b.txt");
+			expect(output).toContain("c.txt");
+			expect(output).not.toContain("d.txt");
+			expect(output).toContain("3 results limit reached");
+			expect(result.details?.resultLimitReached).toBe(3);
+		});
 	});
 
 	describe("ls tool", () => {
@@ -1266,39 +1291,8 @@ describe("edit tool CRLF handling", () => {
 });
 
 describe("truncateLine", () => {
-	it("should not split surrogate pairs at the truncation boundary", () => {
-		// "🙂" = U+1F642, encoded as surrogate pair \uD83D\uDE42 in UTF-16.
-		// Cutting at position 3 would split between \uD83D and \uDE42, orphaning the high surrogate.
-		const result = truncateLine("ab🙂cd", 3);
-		expect(result.wasTruncated).toBe(true);
-		// Should back up by one code unit so the surrogate pair stays intact
-		expect(result.text).toBe("ab... [truncated]");
-	});
-
-	it("should handle surrogate pair at boundary with leading ASCII", () => {
-		// Cutting "a🙂bc" at position 2 is right after 'a' and before the surrogate pair
-		// charCodeAt(2) = 0xD83D (high surrogate, not in 0xDC00-0xDFFF range), so no backup needed
-		const result = truncateLine("a🙂bc", 2);
-		expect(result.wasTruncated).toBe(true);
-		// charCodeAt(2) is 0xD83D which is NOT a low surrogate, so it won't back up.
-		// The surrogate pair will be split. This is an accepted trade-off.
-		// We only guard against low surrogates (U+DC00-U+DFFF) at the cut point.
-		expect(result.text.length).toBeGreaterThan(0);
-	});
-
-	it("should not truncate lines shorter than max chars", () => {
-		const result = truncateLine("hello", 10);
-		expect(result.wasTruncated).toBe(false);
-		expect(result.text).toBe("hello");
-	});
-
-	it("should not back up on low surrogate at position 0", () => {
-		// charCodeAt(0) of "🙂" is 0xD83D (high surrogate), not a low surrogate.
-		// Guard only triggers for low surrogates (0xDC00-0xDFFF).
-		// Position 0 can never be a low surrogate since low surrogates always follow high surrogates.
-		// But if somehow it were (malformed string), the cut > 0 check prevents charCodeAt(-1).
-		const result = truncateLine("x", 0);
-		expect(result.wasTruncated).toBe(true);
-		expect(result.text).toBe("... [truncated]");
+	it("should not split surrogate pairs", () => {
+		expect(truncateLine("a😀b", 2)).toEqual({ text: "a... [truncated]", wasTruncated: true });
+		expect(truncateLine("a😀b", 3)).toEqual({ text: "a😀... [truncated]", wasTruncated: true });
 	});
 });

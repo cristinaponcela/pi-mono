@@ -163,7 +163,7 @@ export function createFindToolDefinition(
 							}
 							const results = await ops.glob(pattern, searchPath, {
 								ignore: ["**/node_modules/**", "**/.git/**"],
-								limit: effectiveLimit,
+								limit: effectiveLimit + 1,
 							});
 							if (signal?.aborted) {
 								settle(() => reject(new Error("Operation aborted")));
@@ -184,7 +184,10 @@ export function createFindToolDefinition(
 								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
 								return toPosixPath(path.relative(searchPath, p));
 							});
-							const resultLimitReached = relativized.length >= effectiveLimit;
+							const resultLimitReached = relativized.length > effectiveLimit;
+							if (resultLimitReached) {
+								relativized.length = effectiveLimit;
+							}
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;

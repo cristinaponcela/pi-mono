@@ -278,7 +278,7 @@ export function truncateLine(
 	// surrogate at `cut - 1` would be orphaned — back up by one.
 	if (cut > 0) {
 		const code = line.charCodeAt(cut);
-		if (code >= 0xDC00 && code <= 0xDFFF) {
+		if (code >= 0xdc00 && code <= 0xdfff) {
 			cut -= 1;
 		}
 	}
