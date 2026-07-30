@@ -3816,6 +3816,8 @@ export class InteractiveMode {
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
+		if (expanded === this.toolOutputExpanded) return;
+
 		this.toolOutputExpanded = expanded;
 		const activeHeader = this.customHeader ?? this.builtInHeader;
 		if (isExpandable(activeHeader)) {
