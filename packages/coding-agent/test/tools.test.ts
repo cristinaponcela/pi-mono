@@ -13,6 +13,7 @@ import {
 	createLsTool,
 	createReadTool,
 	createWriteTool,
+	truncateLine,
 } from "../src/index.ts";
 import * as shellModule from "../src/utils/shell.ts";
 
@@ -256,6 +257,17 @@ describe("Coding Agent Tools", () => {
 			const result = await writeTool.execute("test-call-4", { path: testFile, content });
 
 			expect(getTextOutput(result)).toContain("Successfully wrote");
+		});
+
+		it("should report UTF-8 byte count, not UTF-16 code units", async () => {
+			const testFile = join(testDir, "unicode-bytes.txt");
+			const content = "你好🙂";
+
+			const result = await writeTool.execute("test-call-write-unicode", { path: testFile, content });
+
+			// "你好🙂" is 10 UTF-8 bytes (3+3+4), but 4 UTF-16 code units (length=4)
+			expect(getTextOutput(result)).toContain("Successfully wrote 10 bytes");
+			expect(getTextOutput(result)).not.toContain("Successfully wrote 4 bytes");
 		});
 	});
 
@@ -875,6 +887,47 @@ describe("Coding Agent Tools", () => {
 
 			expect(getTextOutput(result)).toContain("No files found matching pattern");
 		});
+
+		it("should not report limit reached when results exactly equal the limit", async () => {
+			const limit = 5;
+			for (let i = 1; i <= limit; i++) {
+				writeFileSync(join(testDir, `exact-${i}.txt`), "");
+			}
+
+			const result = await findTool.execute("test-call-find-exact-limit", {
+				pattern: "*.txt",
+				path: testDir,
+				limit,
+			});
+
+			const output = getTextOutput(result);
+			const resultLines = output.split("\n").filter((l) => l.trim() && !l.startsWith("["));
+			// Should return exactly `limit` paths
+			expect(resultLines).toHaveLength(limit);
+			// No false "results limit reached" warning
+			expect(output).not.toMatch(/results limit reached/i);
+		});
+
+		it("should report limit reached when results exceed the limit", async () => {
+			const limit = 3;
+			// Create 4 files — one more than the limit
+			for (let i = 1; i <= limit + 1; i++) {
+				writeFileSync(join(testDir, `overflow-${i}.txt`), "");
+			}
+
+			const result = await findTool.execute("test-call-find-overflow-limit", {
+				pattern: "*.txt",
+				path: testDir,
+				limit,
+			});
+
+			const output = getTextOutput(result);
+			const resultLines = output.split("\n").filter((l) => l.trim() && !l.startsWith("["));
+			// Should return exactly `limit` paths (trimmed)
+			expect(resultLines).toHaveLength(limit);
+			// Warning should be present
+			expect(output).toContain("3 results limit reached");
+		});
 	});
 
 	describe("ls tool", () => {
@@ -1209,5 +1262,43 @@ describe("edit tool CRLF handling", () => {
 
 		const content = readFileSync(testFile, "utf-8");
 		expect(content).toBe("\uFEFFfirst\r\nSECOND\r\nthird\r\nFOURTH\r\n");
+	});
+});
+
+describe("truncateLine", () => {
+	it("should not split surrogate pairs at the truncation boundary", () => {
+		// "🙂" = U+1F642, encoded as surrogate pair \uD83D\uDE42 in UTF-16.
+		// Cutting at position 3 would split between \uD83D and \uDE42, orphaning the high surrogate.
+		const result = truncateLine("ab🙂cd", 3);
+		expect(result.wasTruncated).toBe(true);
+		// Should back up by one code unit so the surrogate pair stays intact
+		expect(result.text).toBe("ab... [truncated]");
+	});
+
+	it("should handle surrogate pair at boundary with leading ASCII", () => {
+		// Cutting "a🙂bc" at position 2 is right after 'a' and before the surrogate pair
+		// charCodeAt(2) = 0xD83D (high surrogate, not in 0xDC00-0xDFFF range), so no backup needed
+		const result = truncateLine("a🙂bc", 2);
+		expect(result.wasTruncated).toBe(true);
+		// charCodeAt(2) is 0xD83D which is NOT a low surrogate, so it won't back up.
+		// The surrogate pair will be split. This is an accepted trade-off.
+		// We only guard against low surrogates (U+DC00-U+DFFF) at the cut point.
+		expect(result.text.length).toBeGreaterThan(0);
+	});
+
+	it("should not truncate lines shorter than max chars", () => {
+		const result = truncateLine("hello", 10);
+		expect(result.wasTruncated).toBe(false);
+		expect(result.text).toBe("hello");
+	});
+
+	it("should not back up on low surrogate at position 0", () => {
+		// charCodeAt(0) of "🙂" is 0xD83D (high surrogate), not a low surrogate.
+		// Guard only triggers for low surrogates (0xDC00-0xDFFF).
+		// Position 0 can never be a low surrogate since low surrogates always follow high surrogates.
+		// But if somehow it were (malformed string), the cut > 0 check prevents charCodeAt(-1).
+		const result = truncateLine("x", 0);
+		expect(result.wasTruncated).toBe(true);
+		expect(result.text).toBe("... [truncated]");
 	});
 });

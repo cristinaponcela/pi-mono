@@ -180,7 +180,10 @@ export function createFindToolDefinition(
 							}
 
 							// Relativize paths against the search root for stable output.
-							const relativized = results.map((p) => toPosixPath(path.relative(searchPath, p)));
+							const relativized = results.map((p) => {
+								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
+								return toPosixPath(path.relative(searchPath, p));
+							});
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
@@ -306,7 +309,12 @@ export function createFindToolDefinition(
 								const line = rawLine.replace(/\r$/, "").trim();
 								if (!line) continue;
 								const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
-								let relativePath = path.relative(searchPath, line);
+								let relativePath = line;
+								if (line.startsWith(searchPath)) {
+									relativePath = line.slice(searchPath.length + 1);
+								} else {
+									relativePath = path.relative(searchPath, line);
+								}
 								if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
 								relativized.push(toPosixPath(relativePath));
 							}
