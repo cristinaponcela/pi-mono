@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed tool argument validation to preserve values that already match an `anyOf`/`oneOf` union arm before attempting coercion, avoiding nullable unions converting `null` to another primitive value ([#7328](https://github.com/earendil-works/pi/issues/7328)).
 - Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
 
 ## [0.83.0] - 2026-07-29
