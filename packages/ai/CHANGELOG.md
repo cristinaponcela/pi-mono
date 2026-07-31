@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
+
 ## [0.83.0] - 2026-07-29
 
 ### Breaking Changes

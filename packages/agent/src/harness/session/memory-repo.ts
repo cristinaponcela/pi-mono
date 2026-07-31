@@ -1,31 +1,71 @@
-import { type Session, SessionError, type SessionMetadata, type SessionRepo } from "../types.ts";
+import {
+	type LeafEntry,
+	type SessionEntryCursorOptions,
+	SessionError,
+	type SessionMetadata,
+	type SessionSnapshot,
+	type SessionStorage,
+	type SessionStore,
+	type SessionTreeEntry,
+} from "../types.ts";
 import { InMemorySessionStorage } from "./memory-storage.ts";
-import { createSessionId, createTimestamp, getEntriesToFork, toSession } from "./repo-utils.ts";
+import {
+	createSessionId,
+	createSessionRepository,
+	createTimestamp,
+	getEntriesToFork,
+	type SessionRepository,
+} from "./repo-utils.ts";
+import { createScanningSessionSearch } from "./search-backend.ts";
 
-export class InMemorySessionRepo implements SessionRepo<SessionMetadata, { id?: string }, void> {
-	private sessions = new Map<string, Session<SessionMetadata>>();
+export type InMemorySessionCreateOptions = { id?: string };
 
-	async create(options: { id?: string } = {}): Promise<Session<SessionMetadata>> {
+class InMemorySessionStore implements SessionStore<SessionMetadata, InMemorySessionCreateOptions, void> {
+	private sessions = new Map<string, InMemorySessionStorage<SessionMetadata>>();
+
+	async create(options: InMemorySessionCreateOptions = {}): Promise<SessionMetadata> {
 		const metadata: SessionMetadata = {
 			id: options.id ?? createSessionId(),
 			createdAt: createTimestamp(),
 		};
 		const storage = new InMemorySessionStorage({ metadata });
-		const session = toSession(storage);
-		this.sessions.set(metadata.id, session);
-		return session;
+		this.sessions.set(metadata.id, storage);
+		return metadata;
 	}
 
-	async open(metadata: SessionMetadata): Promise<Session<SessionMetadata>> {
-		const session = this.sessions.get(metadata.id);
-		if (!session) {
-			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
-		}
-		return session;
+	async open(metadata: SessionMetadata): Promise<SessionStorage<SessionMetadata>> {
+		const storage = this.sessions.get(metadata.id);
+		if (!storage) throw new SessionError("not_found", `Session not found: ${metadata.id}`);
+		return storage;
+	}
+
+	async load(metadata: SessionMetadata): Promise<SessionSnapshot<SessionMetadata>> {
+		const storage = await this.open(metadata);
+		return {
+			metadata: await storage.getMetadata(),
+			leafId: await storage.getLeafId(),
+			entries: await storage.getEntries(),
+		};
 	}
 
 	async list(): Promise<SessionMetadata[]> {
-		return Promise.all([...this.sessions.values()].map((session) => session.getMetadata()));
+		return Promise.all([...this.sessions.values()].map((storage) => storage.getMetadata()));
+	}
+
+	async getEntries(metadata: SessionMetadata, options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		return await (await this.open(metadata)).getEntries(options);
+	}
+
+	async createEntryId(metadata: SessionMetadata): Promise<string> {
+		return (await this.open(metadata)).createEntryId();
+	}
+
+	async appendEntry(metadata: SessionMetadata, entry: SessionTreeEntry): Promise<void> {
+		await (await this.open(metadata)).appendEntry(entry);
+	}
+
+	async setLeafId(metadata: SessionMetadata, leafId: string | null): Promise<LeafEntry> {
+		return await (await this.open(metadata)).setLeafId(leafId);
 	}
 
 	async delete(metadata: SessionMetadata): Promise<void> {
@@ -35,16 +75,28 @@ export class InMemorySessionRepo implements SessionRepo<SessionMetadata, { id?: 
 	async fork(
 		sourceMetadata: SessionMetadata,
 		options: { entryId?: string; position?: "before" | "at"; id?: string },
-	): Promise<Session<SessionMetadata>> {
+	): Promise<SessionMetadata> {
 		const source = await this.open(sourceMetadata);
-		const forkedEntries = await getEntriesToFork(source.getStorage(), options);
+		const forkedEntries = await getEntriesToFork(source, options);
 		const metadata: SessionMetadata = {
 			id: options.id ?? createSessionId(),
 			createdAt: createTimestamp(),
 		};
 		const storage = new InMemorySessionStorage({ metadata, entries: forkedEntries });
-		const session = toSession(storage);
-		this.sessions.set(metadata.id, session);
-		return session;
+		this.sessions.set(metadata.id, storage);
+		return metadata;
 	}
+}
+
+export function createInMemorySessionStore(): SessionStore<SessionMetadata, InMemorySessionCreateOptions, void> {
+	return new InMemorySessionStore();
+}
+
+export function createInMemorySessionRepository(): SessionRepository<
+	SessionMetadata,
+	InMemorySessionCreateOptions,
+	void
+> {
+	const store = createInMemorySessionStore();
+	return createSessionRepository({ store, search: createScanningSessionSearch(store) });
 }

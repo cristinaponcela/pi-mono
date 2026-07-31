@@ -3,20 +3,28 @@ import type {
 	JsonlSessionCreateOptions,
 	JsonlSessionListOptions,
 	JsonlSessionMetadata,
-	JsonlSessionRepoApi,
-	Session,
+	LeafEntry,
+	SessionEntryCursorOptions,
+	SessionSnapshot,
+	SessionStorage,
+	SessionStore,
+	SessionTreeEntry,
 } from "../types.ts";
 import { SessionError, toError } from "../types.ts";
 import { JsonlSessionStorage, loadJsonlSessionMetadata } from "./jsonl-storage.ts";
 import {
 	createSessionId,
+	createSessionRepository,
 	createTimestamp,
 	getEntriesToFork,
 	getFileSystemResultOrThrow,
-	toSession,
+	type SessionRepository,
 } from "./repo-utils.ts";
+import { createScanningSessionSearch } from "./search-backend.ts";
 
-type JsonlSessionRepoFileSystem = Pick<
+export type JsonlSessionStoreOptions = { fs: JsonlSessionStoreFileSystem; sessionsRoot: string };
+
+export type JsonlSessionStoreFileSystem = Pick<
 	FileSystem,
 	| "cwd"
 	| "absolutePath"
@@ -35,12 +43,14 @@ function encodeCwd(cwd: string): string {
 	return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-export class JsonlSessionRepo implements JsonlSessionRepoApi {
-	private readonly fs: JsonlSessionRepoFileSystem;
+class JsonlSessionStore
+	implements SessionStore<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions>
+{
+	private readonly fs: JsonlSessionStoreFileSystem;
 	private readonly sessionsRootInput: string;
 	private sessionsRoot: string | undefined;
 
-	constructor(options: { fs: JsonlSessionRepoFileSystem; sessionsRoot: string }) {
+	constructor(options: JsonlSessionStoreOptions) {
 		this.fs = options.fs;
 		this.sessionsRootInput = options.sessionsRoot;
 	}
@@ -72,7 +82,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 		);
 	}
 
-	async create(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
+	async create(options: JsonlSessionCreateOptions): Promise<JsonlSessionMetadata> {
 		const id = options.id ?? createSessionId();
 		const createdAt = createTimestamp();
 		const sessionDir = await this.getSessionDir(options.cwd);
@@ -87,17 +97,25 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 			parentSessionPath: options.parentSessionPath,
 			metadata: options.metadata,
 		});
-		return toSession(storage);
+		return await storage.getMetadata();
 	}
 
-	async open(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
+	async open(metadata: JsonlSessionMetadata): Promise<SessionStorage<JsonlSessionMetadata>> {
 		if (
 			!getFileSystemResultOrThrow(await this.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)
 		) {
 			throw new SessionError("not_found", `Session not found: ${metadata.path}`);
 		}
-		const storage = await JsonlSessionStorage.open(this.fs, metadata.path);
-		return toSession(storage);
+		return await JsonlSessionStorage.open(this.fs, metadata.path);
+	}
+
+	async load(metadata: JsonlSessionMetadata): Promise<SessionSnapshot<JsonlSessionMetadata>> {
+		const storage = await this.open(metadata);
+		return {
+			metadata: await storage.getMetadata(),
+			leafId: await storage.getLeafId(),
+			entries: await storage.getEntries(),
+		};
 	}
 
 	async list(options: JsonlSessionListOptions = {}): Promise<JsonlSessionMetadata[]> {
@@ -124,6 +142,22 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 		return sessions;
 	}
 
+	async getEntries(metadata: JsonlSessionMetadata, options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		return await (await this.open(metadata)).getEntries(options);
+	}
+
+	async createEntryId(metadata: JsonlSessionMetadata): Promise<string> {
+		return (await this.open(metadata)).createEntryId();
+	}
+
+	async appendEntry(metadata: JsonlSessionMetadata, entry: SessionTreeEntry): Promise<void> {
+		await (await this.open(metadata)).appendEntry(entry);
+	}
+
+	async setLeafId(metadata: JsonlSessionMetadata, leafId: string | null): Promise<LeafEntry> {
+		return await (await this.open(metadata)).setLeafId(leafId);
+	}
+
 	async delete(metadata: JsonlSessionMetadata): Promise<void> {
 		getFileSystemResultOrThrow(
 			await this.fs.remove(metadata.path, { force: true }),
@@ -134,9 +168,9 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 	async fork(
 		sourceMetadata: JsonlSessionMetadata,
 		options: JsonlSessionCreateOptions & { entryId?: string; position?: "before" | "at"; id?: string },
-	): Promise<Session<JsonlSessionMetadata>> {
+	): Promise<JsonlSessionMetadata> {
 		const source = await this.open(sourceMetadata);
-		const forkedEntries = await getEntriesToFork(source.getStorage(), options);
+		const forkedEntries = await getEntriesToFork(source, options);
 		const id = options.id ?? createSessionId();
 		const createdAt = createTimestamp();
 		const sessionDir = await this.getSessionDir(options.cwd);
@@ -157,7 +191,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 		for (const entry of forkedEntries) {
 			await storage.appendEntry(entry);
 		}
-		return toSession(storage);
+		return await storage.getMetadata();
 	}
 
 	private async listSessionDirs(): Promise<string[]> {
@@ -176,4 +210,17 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 		);
 		return entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path);
 	}
+}
+
+export function createJsonlSessionStore(
+	options: JsonlSessionStoreOptions,
+): SessionStore<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions> {
+	return new JsonlSessionStore(options);
+}
+
+export function createJsonlSessionRepository(
+	options: JsonlSessionStoreOptions,
+): SessionRepository<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions> {
+	const store = createJsonlSessionStore(options);
+	return createSessionRepository({ store, search: createScanningSessionSearch(store) });
 }

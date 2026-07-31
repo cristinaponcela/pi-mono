@@ -263,7 +263,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		return this.currentLeafId;
 	}
 
-	async setLeafId(leafId: string | null): Promise<void> {
+	async setLeafId(leafId: string | null): Promise<LeafEntry> {
 		if (leafId !== null && !(await this.getEntry(leafId))) {
 			throw new SessionError("not_found", `Entry ${leafId} not found`);
 		}
@@ -275,6 +275,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			targetId: leafId,
 		};
 		await this.appendEntry(entry);
+		return entry;
 	}
 
 	async createEntryId(): Promise<string> {

@@ -4,12 +4,18 @@
 
 ### Added
 
+- Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added `--alt` to run interactive mode with the alternate-screen TUI ([#7304](https://github.com/earendil-works/pi/issues/7304)).
+- Added a sticky editor, status, widget, and footer dock to `--alt` mode while keeping the transcript independently scrollable.
 
 ### Fixed
 
+- Fixed malformed resource arrays in package manifests crashing session startup ([#7187](https://github.com/earendil-works/pi/issues/7187)).
+- Fixed the DOOM overlay example downloading its shareware WAD from a dead URL.
 - Fixed `setToolsExpanded(false)` to be a no-op when tool output is already collapsed, avoiding redundant `Tool output: collapsed` startup notices from extensions ([#7292](https://github.com/earendil-works/pi/issues/7292)).
 - Fixed extension-driven model calls in custom compaction, handoff, and Q&A examples to dispatch through the coding-agent model runtime so custom providers and resolved auth options are preserved ([#7325](https://github.com/earendil-works/pi/pull/7325)).
+- Fixed long-running sessions using stale credentials after another process updates `auth.json` ([#7319](https://github.com/earendil-works/pi/issues/7319)).
+- Updated the packaged `brace-expansion` dependency to 5.0.8 to address GHSA-mh99-v99m-4gvg ([#7316](https://github.com/earendil-works/pi/issues/7316)).
 
 ## [0.83.0] - 2026-07-29
 
