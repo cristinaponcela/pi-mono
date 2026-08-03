@@ -5,6 +5,7 @@
 ### Fixed
 
 - Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
+- Fixed Fireworks Kimi K3 models to use the OpenAI-compatible API with native reasoning-effort levels and deferred tools ([#7199](https://github.com/earendil-works/pi/issues/7199), [#7230](https://github.com/earendil-works/pi/pull/7230) by [@XBeg9](https://github.com/XBeg9)).
 
 ## [0.83.0] - 2026-07-29
 

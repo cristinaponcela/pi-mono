@@ -5,7 +5,6 @@ import { Image } from "../src/components/image.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
-import { TuiAltScreen } from "../src/TuiAltScreen.ts";
 import {
 	encodeKitty,
 	hyperlink,
@@ -13,7 +12,10 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
+import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
+
+const OSC133_ZONE_START = "\x1b]133;A\x07";
 
 class RecordingTerminal extends VirtualTerminal {
 	readonly events: Array<{ type: "write"; data: string } | { type: "start" } | { type: "stop" }> = [];
@@ -143,6 +145,88 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("drags a visible scrollbar thumb and keeps it visible until release", async () => {
+		const terminal = new RecordingTerminal(10, 5);
+		const tui = new TuiAltScreen(terminal);
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{
+				primary: true,
+				scrollbar: "auto",
+				scrollbarHideDelayMs: 50,
+			},
+		);
+		tui.setLayoutRoot(scrollView);
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+
+		terminal.sendInput("\x1b[<65;10;1M");
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.scrollTop, 1);
+		assert.strictEqual(scrollView.isScrollbarVisible, true);
+
+		terminal.sendInput("\x1b[<0;10;1M");
+		await terminal.waitForRender();
+		await new Promise((resolve) => setTimeout(resolve, 70));
+		assert.strictEqual(scrollView.isScrollbarVisible, true);
+
+		terminal.sendInput("\x1b[<32;10;4M");
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.scrollTop, 15);
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 16", "line 17", "line 18", "line 19", "line 20"],
+		);
+
+		terminal.sendInput("\x1b[<0;10;4m");
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.isScrollbarVisible, true);
+		await new Promise((resolve) => setTimeout(resolve, 70));
+		assert.strictEqual(scrollView.isScrollbarVisible, true);
+		terminal.sendInput("\x1b[<35;9;4M");
+		await new Promise((resolve) => setTimeout(resolve, 70));
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+
+		terminal.sendInput("\x1b[<64;10;5M");
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.scrollTop, 14);
+		await new Promise((resolve) => setTimeout(resolve, 70));
+		assert.strictEqual(scrollView.isScrollbarVisible, true);
+		terminal.sendInput("\x1b[<35;9;5M");
+		await new Promise((resolve) => setTimeout(resolve, 70));
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1003h")));
+		tui.stop();
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1003l")));
+	});
+
+	it("keeps the scrollbar column selectable while the thumb is hidden", async () => {
+		const terminal = new RecordingTerminal(10, 2);
+		const tui = new TuiAltScreen(terminal);
+		const scrollView = new ScrollView(new Text("123456789A\nabcdefghij\nmore\nlines", 0, 0), {
+			scrollbar: "auto",
+		});
+		tui.setLayoutRoot(scrollView);
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+
+		terminal.sendInput("\x1b[<0;10;1M");
+		terminal.sendInput("\x1b[<32;10;2M");
+		terminal.sendInput("\x1b[<0;10;2m");
+		await terminal.waitForRender();
+
+		const expected = `\x1b]52;c;${Buffer.from("A\nabcdefghij").toString("base64")}\x07`;
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes(expected)),
+			JSON.stringify(terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;"))),
+		);
+		tui.stop();
+	});
+
 	it("chains unused wheel delta to an outer scroll view", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal, undefined, undefined, { wheelScrollLines: 3 });
@@ -167,26 +251,82 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("supports configurable keyboard viewport navigation", async () => {
-		const terminal = new VirtualTerminal(20, 4);
+	it("supports configurable keyboard viewport navigation with four rows of page overlap", async () => {
+		const terminal = new VirtualTerminal(20, 8);
 		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.addChild(new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
 		tui.start();
 		await terminal.waitForRender();
 
-		terminal.sendInput("\x1b[5$");
+		terminal.sendInput("\x1b[57421u");
+		terminal.sendInput("\x1b[57421;1:3u");
 		await terminal.waitForRender();
 		assert.deepStrictEqual(
 			terminal.getViewport().map((line) => line.trimEnd()),
-			["line 2", "line 3", "line 4", "line 5"],
+			["line 1", "line 2", "line 3", "line 4", "line 5", "line 6", "line 7", "line 8"],
 		);
 
-		terminal.sendInput("\x1b[1;5F");
+		terminal.sendInput("\x1b[57422u");
+		terminal.sendInput("\x1b[57422;1:3u");
 		await terminal.waitForRender();
 		assert.deepStrictEqual(
 			terminal.getViewport().map((line) => line.trimEnd()),
-			["line 5", "line 6", "line 7", "line 8"],
+			["line 5", "line 6", "line 7", "line 8", "line 9", "line 10", "line 11", "line 12"],
 		);
+
+		terminal.sendInput("\x1bOH");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 1", "line 2", "line 3", "line 4", "line 5", "line 6", "line 7", "line 8"],
+		);
+
+		terminal.sendInput("\x1bOF");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 5", "line 6", "line 7", "line 8", "line 9", "line 10", "line 11", "line 12"],
+		);
+
+		tui.stop();
+	});
+
+	it("jumps between OSC 133 semantic prompt markers", async () => {
+		const terminal = new VirtualTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(
+			new Text(
+				[1, 2, 3, 4].flatMap((message) => [`${OSC133_ZONE_START}message ${message}`, "detail"]).join("\n"),
+				0,
+				0,
+			),
+		);
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 5);
+
+		terminal.sendInput("\x1b[57419;6u");
+		terminal.sendInput("\x1b[57419;6:3u");
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 4);
+		assert.strictEqual(terminal.getViewport()[0]?.trimEnd(), "message 3");
+
+		terminal.sendInput("\x1b[1;6A");
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 2);
+		assert.strictEqual(terminal.getViewport()[0]?.trimEnd(), "message 2");
+
+		terminal.sendInput("\x1b[57420;6u");
+		terminal.sendInput("\x1b[57420;6:3u");
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 4);
+		assert.strictEqual(terminal.getViewport()[0]?.trimEnd(), "message 3");
+
+		terminal.sendInput("\x1b[1;6B");
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, 5);
+		assert.strictEqual(terminal.getViewport()[1]?.trimEnd(), "message 4");
+		assert.strictEqual(tui.isFollowingOutput, true);
 
 		tui.stop();
 	});
@@ -271,6 +411,56 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("reuses moved Kitty images without dropping HStack siblings", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 6);
+			const tui = new TuiAltScreen(terminal);
+			const label = new Text("left", 0, 0);
+			const image = new Image(
+				"A".repeat(8192),
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{},
+				{ widthPx: 100, heightPx: 100 },
+			);
+			const header = new Text("header", 0, 0);
+			const row = new HStack([
+				{ component: label, basis: 10 },
+				{ component: image, basis: 10 },
+			]);
+			tui.setLayoutRoot(
+				new VStack([
+					{ component: header, basis: "auto" },
+					{ component: row, basis: 4 },
+				]),
+			);
+			tui.start();
+			await terminal.waitForRender();
+			assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b_Ga=T")));
+
+			const eventCount = terminal.events.length;
+			label.setText("changed");
+			header.setText("header\nsecond");
+			tui.requestRender();
+			await terminal.waitForRender();
+			const redrawWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			const placementIndex = redrawWrites.indexOf("\x1b_Ga=p,q=2");
+			assert.ok(redrawWrites.includes("\x1b_Ga=d,d=a,q=2\x1b\\"));
+			assert.ok(placementIndex > redrawWrites.indexOf("changed"));
+			assert.ok(!redrawWrites.includes("\x1b_Ga=T"));
+			assert.ok(redrawWrites.length < 2000, `expected placement-only redraw, got ${redrawWrites.length} bytes`);
+			assert.ok(terminal.getViewport().some((line) => line.trimEnd() === "changed"));
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
 	it("opens an OSC 8 hyperlink on click but not on drag", async () => {
 		const terminal = new RecordingTerminal(20, 3);
 		const openedUrls: string[] = [];
@@ -342,6 +532,38 @@ describe("TuiAltScreen", () => {
 		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
 
 		tui.stop();
+	});
+
+	it("ignores orphan selection events and cancels an active selection on focus loss", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		const clipboardWriteCount = () =>
+			terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;")).length;
+
+		// A completed click leaves a zero-width anchor, but later orphaned drag/release events must not extend it.
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<0;1;1m");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.strictEqual(clipboardWriteCount(), 0);
+
+		// Losing focus also cancels a press whose matching release never arrived.
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.strictEqual(clipboardWriteCount(), 0);
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1004h")));
+
+		tui.stop();
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1004l")));
 	});
 
 	it("stacks flash messages and collapses them as they expire", async () => {

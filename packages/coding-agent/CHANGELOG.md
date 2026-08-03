@@ -5,16 +5,29 @@
 ### Added
 
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
-- Added `--alt` to run interactive mode with the alternate-screen TUI ([#7304](https://github.com/earendil-works/pi/issues/7304)).
-- Added a sticky editor, status, widget, and footer dock to `--alt` mode while keeping the transcript independently scrollable.
+- Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
+- Added a sticky editor, status, widget, and footer dock to fullscreen mode while keeping the transcript independently scrollable.
+- Added a draggable transcript scrollbar to fullscreen mode with configurable `auto`, `always`, and `hidden` modes through `/settings`; `always` reserves the rightmost column.
+- Added page scrolling and marked-message navigation shortcuts to fullscreen mode.
+- Added an optional `scrollbarThumb` theme color for fullscreen scrollbar thumbs, falling back to `selectedBg`.
 
 ### Fixed
 
 - Fixed bare exact `--model` IDs shared by multiple providers choosing the first catalog entry instead of the sole authenticated provider or a clear ambiguity error ([#7327](https://github.com/earendil-works/pi/issues/7327)).
+- Fixed `Ctrl+X` copy confirmations in fullscreen mode adding a transcript status line instead of showing the transient `Copied!` marker.
+- Fixed Kitty image previews in fullscreen mode overlapping the sticky editor and footer dock while scrolling.
+- Fixed image-heavy fullscreen sessions lagging when layout changes retransmitted visible Kitty image payloads and rendered the transcript twice per frame.
+- Fixed spaces in `/settings` searches toggling the highlighted setting while typing multi-word queries such as **UI mode** or **Quiet startup**.
+- Fixed custom editors not inheriting the default editor's autocomplete dropdown item limit ([#7333](https://github.com/earendil-works/pi/issues/7333)).
 - Fixed malformed resource arrays in package manifests crashing session startup ([#7187](https://github.com/earendil-works/pi/issues/7187)).
 - Fixed the DOOM overlay example downloading its shareware WAD from a dead URL.
 - Fixed `setToolsExpanded(false)` to be a no-op when tool output is already collapsed, avoiding redundant `Tool output: collapsed` startup notices from extensions ([#7292](https://github.com/earendil-works/pi/issues/7292)).
-- Fixed long-running sessions using stale credentials after another process updates `auth.json` ([#7319](https://github.com/earendil-works/pi/issues/7319)).
+- Fixed extension-driven model calls in custom compaction, handoff, and Q&A examples to dispatch through the coding-agent model runtime so custom providers and resolved auth options are preserved ([#7325](https://github.com/earendil-works/pi/pull/7325)).
+- Fixed long-running sessions using stale credentials after another process updates `auth.json` without serializing concurrent credential reads and delaying startup ([#7319](https://github.com/earendil-works/pi/issues/7319)).
+- Updated the packaged `brace-expansion` dependency to 5.0.8 to address GHSA-mh99-v99m-4gvg ([#7316](https://github.com/earendil-works/pi/issues/7316)).
+- Fixed forced model availability refreshes remaining blocked behind a stalled earlier refresh ([#7301](https://github.com/earendil-works/pi/issues/7301), [#7421](https://github.com/earendil-works/pi/pull/7421) by [@a-yeyang](https://github.com/a-yeyang)).
+- Fixed `/model` catalog refresh failures to identify every catalog that failed.
+- Fixed provider login remaining stuck after saving credentials when a model catalog refresh stalls ([#7027](https://github.com/earendil-works/pi/issues/7027)).
 
 ## [0.83.0] - 2026-07-29
 
