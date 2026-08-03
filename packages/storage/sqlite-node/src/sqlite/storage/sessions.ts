@@ -7,7 +7,6 @@ export interface SessionRow {
 	metadata: string | null;
 	cwd: string;
 	parent_session_id: string | null;
-	active_leaf_id: string | null;
 }
 
 function parseMetadata(metadata: string | null, sessionId: string): Record<string, unknown> | undefined {

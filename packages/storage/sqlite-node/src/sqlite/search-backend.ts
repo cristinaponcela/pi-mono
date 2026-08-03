@@ -40,17 +40,17 @@ async function ensureSearchSchema(db: SqliteDatabase): Promise<void> {
 	await db.exec(`
 CREATE VIRTUAL TABLE IF NOT EXISTS session_search_fts USING fts5(
   payload,
-  content = 'session_entries',
+  content = 'entries',
   content_rowid = 'rowid',
   tokenize = 'trigram remove_diacritics 1'
 );
-CREATE TRIGGER IF NOT EXISTS session_search_fts_ai AFTER INSERT ON session_entries BEGIN
+CREATE TRIGGER IF NOT EXISTS session_search_fts_ai AFTER INSERT ON entries BEGIN
   INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
 END;
-CREATE TRIGGER IF NOT EXISTS session_search_fts_ad AFTER DELETE ON session_entries BEGIN
+CREATE TRIGGER IF NOT EXISTS session_search_fts_ad AFTER DELETE ON entries BEGIN
   INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
 END;
-CREATE TRIGGER IF NOT EXISTS session_search_fts_au AFTER UPDATE OF payload ON session_entries BEGIN
+CREATE TRIGGER IF NOT EXISTS session_search_fts_au AFTER UPDATE OF payload ON entries BEGIN
   INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
   INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
 END;
@@ -104,7 +104,7 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 			const query = `"${text.replaceAll('"', '""')}"`;
 			const rows = await db
 				.prepare(
-					"SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id, s.active_leaf_id, se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score FROM session_search_fts JOIN session_entries se ON se.rowid = session_search_fts.rowid JOIN sessions s ON s.id = se.session_id WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?) ORDER BY score",
+					"SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id, se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score FROM session_search_fts JOIN entries se ON se.rowid = session_search_fts.rowid JOIN sessions s ON s.id = se.session_id WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?) ORDER BY score",
 				)
 				.all<SessionRow & { entry_id: string; timestamp: string; score: number }>(
 					query,

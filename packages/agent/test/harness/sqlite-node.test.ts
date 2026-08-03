@@ -9,8 +9,8 @@ import {
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JsonlSessionRepository } from "../../src/harness/session/jsonl-repo.ts";
 import { createScanningSessionSearch } from "../../src/harness/session/search.ts";
-import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "../../src/harness/types.ts";
-import { createTempDir, createUserMessage } from "./session-test-utils.ts";
+import type { SessionSearchOptions } from "../../src/harness/types.ts";
+import { createTempDir, createUserMessage, getSqliteEntries } from "./session-test-utils.ts";
 
 const ownedRepositories: AsyncDisposable[] = [];
 
@@ -118,7 +118,7 @@ describe("SqliteSessionBackend with explicit SQLite FTS5 search", () => {
 		}
 
 		await expect(session.appendMessage(createUserMessage("must roll back"))).rejects.toThrow();
-		await expect(session.getEntries()).resolves.toEqual([]);
+		await expect(getSqliteEntries(session)).resolves.toEqual([]);
 	});
 
 	it("rolls back canonical deletion when co-located FTS cleanup fails", async () => {
@@ -141,7 +141,7 @@ describe("SqliteSessionBackend with explicit SQLite FTS5 search", () => {
 
 		await expect(repo.delete(metadata)).rejects.toThrow();
 		const reopened = await repo.open(metadata);
-		await expect(reopened.getEntries()).resolves.toHaveLength(1);
+		await expect(getSqliteEntries(reopened)).resolves.toHaveLength(1);
 	});
 
 	it("initializes canonical storage when searched before the first session is created", async () => {
@@ -168,8 +168,10 @@ describe("SqliteSessionRepository with custom search", () => {
 	it("uses an independently supplied search implementation", async () => {
 		const root = createTempDir();
 		const searches: SessionSearchOptions[] = [];
-		const search: SessionSearch<SqliteSessionMetadata> = {
-			async search(options): Promise<SessionSearchHit<SqliteSessionMetadata>[]> {
+		const search: {
+			search(options: SessionSearchOptions): Promise<{ metadata: SqliteSessionMetadata; entryId: string }[]>;
+		} = {
+			async search(options) {
 				searches.push(options);
 				return [];
 			},

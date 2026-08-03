@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createNodeSqliteFactory, SqliteSessionRepository } from "../../../storage/sqlite-node/src/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
+import {
+	appendSqliteCompaction,
+	createAssistantMessage,
+	createUserMessage,
+	getSqliteBranch,
+	getSqliteEntries,
+	moveSqliteMainLane,
+} from "./session-test-utils.ts";
 
 function createTempDir(): string {
 	return mkdtempSync(join(tmpdir(), "pi-agent-sqlite-branch-cache-"));
@@ -20,9 +27,9 @@ describe("SQLite branch cache", () => {
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const keptId = await session.appendMessage(createUserMessage("kept"));
-		const compactionId = await session.appendCompaction("summary", keptId, 100);
+		const compactionId = await appendSqliteCompaction(session, "summary", keptId, 100);
 		await session.appendMessage(createAssistantMessage("first child"));
-		await session.moveTo(compactionId);
+		await moveSqliteMainLane(session, compactionId);
 		const branchedId = await session.appendMessage(createAssistantMessage("branched child"));
 
 		const db = await sqlite.open(databasePath);
@@ -49,19 +56,19 @@ describe("SQLite branch cache", () => {
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const oldId = await session.appendMessage(createUserMessage("old"));
 		const keptId = await session.appendMessage(createUserMessage("kept"));
-		const compactionId = await session.appendCompaction("summary", keptId, 100);
+		const compactionId = await appendSqliteCompaction(session, "summary", keptId, 100);
 		const leafId = await session.appendMessage(createAssistantMessage("new"));
 
 		const db = await sqlite.open(databasePath);
 		try {
 			await db
-				.prepare("UPDATE session_entries SET payload = ? WHERE session_id = ? AND id = ?")
+				.prepare("UPDATE entries SET payload = ? WHERE session_id = ? AND id = ?")
 				.run("not json", "session-1", oldId);
 		} finally {
 			await db.close();
 		}
 
-		expect((await session.getBranch()).map((entry) => entry.id)).toEqual([keptId, compactionId, leafId]);
+		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([keptId, compactionId, leafId]);
 	});
 
 	it("preserves nested compaction boundaries when reading the cache", async () => {
@@ -71,7 +78,8 @@ describe("SQLite branch cache", () => {
 		const repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
-		const firstCompactionId = await session.appendCompaction(
+		const firstCompactionId = await appendSqliteCompaction(
+			session,
 			"first summary",
 			rootId,
 			100,
@@ -81,10 +89,10 @@ describe("SQLite branch cache", () => {
 			[],
 		);
 		const middleId = await session.appendMessage(createUserMessage("middle"));
-		const secondCompactionId = await session.appendCompaction("second summary", rootId, 200);
+		const secondCompactionId = await appendSqliteCompaction(session, "second summary", rootId, 200);
 		const leafId = await session.appendMessage(createAssistantMessage("new"));
 
-		expect((await session.getBranch()).map((entry) => entry.id)).toEqual([
+		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([
 			firstCompactionId,
 			middleId,
 			secondCompactionId,
@@ -110,7 +118,7 @@ describe("SQLite branch cache", () => {
 			await db.close();
 		}
 
-		expect((await session.getBranch()).map((entry) => entry.id)).toEqual([rootId, childId]);
+		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([rootId, childId]);
 
 		const inspection = await sqlite.open(databasePath);
 		try {
@@ -152,7 +160,7 @@ describe("SQLite branch cache", () => {
 			await db.close();
 		}
 
-		await expect(session.getBranch()).rejects.toMatchObject({
+		await expect(getSqliteBranch(session)).rejects.toMatchObject({
 			code: "storage",
 			message: expect.stringContaining("Failed to rebuild SQLite branch cache"),
 		});
@@ -166,7 +174,7 @@ describe("SQLite branch cache", () => {
 		} finally {
 			await inspection.close();
 		}
-		expect(await session.getBranch()).toHaveLength(1);
+		expect(await getSqliteBranch(session)).toHaveLength(1);
 	});
 
 	it("repairs a missing source branch cache while forking transactionally", async () => {
@@ -193,7 +201,7 @@ describe("SQLite branch cache", () => {
 			entryId: childId,
 			position: "at",
 		});
-		expect((await fork.getEntries()).map((entry) => entry.id)).toEqual([rootId, childId]);
+		expect((await getSqliteEntries(fork)).map((entry) => entry.id)).toEqual([rootId, childId]);
 	});
 
 	it("repairs a stale branch cache from canonical parent links", async () => {
@@ -210,7 +218,7 @@ describe("SQLite branch cache", () => {
 		const db = await sqlite.open(databasePath);
 		try {
 			await db
-				.prepare("UPDATE session_entries SET parent_id = ? WHERE session_id = ? AND id = ?")
+				.prepare("UPDATE entries SET parent_id = ? WHERE session_id = ? AND id = ?")
 				.run(rootId, "session-1", leafId);
 		} finally {
 			await db.close();

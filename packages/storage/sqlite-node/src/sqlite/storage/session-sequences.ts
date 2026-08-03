@@ -14,3 +14,7 @@ export async function getNextSequence(db: SqliteDatabase, sessionId: string): Pr
 export async function advanceSequence(db: SqliteDatabase, sessionId: string, nextSeq: number): Promise<void> {
 	await db.prepare("UPDATE session_sequences SET next_seq = ? WHERE session_id = ?").run(nextSeq + 1, sessionId);
 }
+
+export async function deleteSequenceForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run(sessionId);
+}

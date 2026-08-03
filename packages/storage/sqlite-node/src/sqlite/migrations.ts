@@ -20,9 +20,9 @@ export async function loadMigrations(): Promise<SqliteMigration[]> {
 			sql: await loadMigrationSql("./migrations/001_initial.sql"),
 		},
 		{
-			id: "002_branch_tips.sql",
+			id: "002_lanes.sql",
 			order: 2,
-			sql: await loadMigrationSql("./migrations/002_branch_tips.sql"),
+			sql: await loadMigrationSql("./migrations/002_lanes.sql"),
 		},
 	];
 }

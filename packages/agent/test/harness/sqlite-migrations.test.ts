@@ -15,7 +15,18 @@ import {
 } from "../../../storage/sqlite-node/src/index.ts";
 import { SqliteSessionConnection } from "../../../storage/sqlite-node/src/sqlite/storage/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
+import {
+	appendSqliteCompaction,
+	appendSqliteLabel,
+	appendSqliteModelChange,
+	appendSqliteSessionName,
+	appendSqliteThinkingLevelChange,
+	buildSqliteContext,
+	createAssistantMessage,
+	createUserMessage,
+	getSqliteEntries,
+	moveSqliteMainLane,
+} from "./session-test-utils.ts";
 
 function createTempDir(): string {
 	return mkdtempSync(join(tmpdir(), "pi-agent-sqlite-"));
@@ -102,7 +113,7 @@ describe("SQLite migrations", () => {
 		const db = await sqlite.open(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_branch_tips.sql"]);
+			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_lanes.sql"]);
 			const tables = await db
 				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string; sql: string | null }>();
@@ -110,16 +121,15 @@ describe("SQLite migrations", () => {
 				expect.arrayContaining([
 					"migrations",
 					"sessions",
-					"session_entries",
+					"entries",
 					"session_sequences",
 					"branch_entries",
 					"branch_tips",
 					"session_materialized",
-					"entry_materialized",
 				]),
 			);
 			const sessionColumns = await db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
-			expect(sessionColumns.map((column) => column.name)).toContain("active_leaf_id");
+			expect(sessionColumns.map((column) => column.name)).toContain("leaf_id");
 			const branchIndexes = await db
 				.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'branch_entries'")
 				.all<{ name: string }>();
@@ -131,7 +141,6 @@ describe("SQLite migrations", () => {
 				"branch_entries",
 				"branch_tips",
 				"session_materialized",
-				"entry_materialized",
 			]) {
 				const table = tables.find((row) => row.name === tableName);
 				expect(table?.sql).toContain("WITHOUT ROWID");
@@ -155,7 +164,7 @@ describe("SQLite migrations", () => {
 				.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
 				.run(initial.id, "2026-01-01T00:00:00.000Z");
 			await db
-				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
+				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, seq) VALUES (?, ?, ?, ?)")
 				.run("session-1", "legacy-branch", "entry-1", 1);
 
 			await applyMigrations(db);
@@ -166,7 +175,7 @@ describe("SQLite migrations", () => {
 			).toBeDefined();
 			expect(
 				(await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>()).map((row) => row.id),
-			).toEqual(["001_initial.sql", "002_branch_tips.sql"]);
+			).toEqual(["001_initial.sql", "002_lanes.sql"]);
 		} finally {
 			await db.close();
 		}
@@ -209,8 +218,8 @@ describe("SQLite migrations", () => {
 		const db = await sqlite.open(databasePath);
 		try {
 			await db.exec(`
-CREATE TRIGGER fail_fork_entry BEFORE INSERT ON session_entries
-WHEN new.session_id = 'fork' AND new.entry_seq = 2
+CREATE TRIGGER fail_fork_entry BEFORE INSERT ON entries
+WHEN new.session_id = 'fork' AND new.seq = 2
 BEGIN
   SELECT RAISE(ABORT, 'fail fork');
 END;
@@ -228,7 +237,7 @@ END;
 				await inspection.prepare("SELECT id FROM sessions WHERE id = ?").get<{ id: string }>("fork"),
 			).toBeUndefined();
 			expect(
-				await inspection.prepare("SELECT id FROM session_entries WHERE session_id = ?").all<{ id: string }>("fork"),
+				await inspection.prepare("SELECT id FROM entries WHERE session_id = ?").all<{ id: string }>("fork"),
 			).toEqual([]);
 		} finally {
 			await inspection.close();
@@ -244,21 +253,21 @@ END;
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const childId = await session.appendMessage(createAssistantMessage("child"));
-		await session.moveTo(rootId);
+		await moveSqliteMainLane(session, rootId);
 
 		const db = await sqlite.open(databasePath);
 		try {
 			const row = await db
-				.prepare("SELECT active_leaf_id FROM sessions WHERE id = ?")
-				.get<{ active_leaf_id: string | null }>("session-1");
-			expect(row?.active_leaf_id).toBe(rootId);
+				.prepare("SELECT leaf_id FROM sessions WHERE id = ?")
+				.get<{ leaf_id: string | null }>("session-1");
+			expect(row?.leaf_id).toBe(rootId);
 			const latestBranchRow = await db
 				.prepare(
-					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1",
+					"SELECT branch_id, entry_id, seq FROM branch_entries WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
 				)
-				.get<{ branch_id: string; entry_id: string; entry_seq: number }>("session-1");
+				.get<{ branch_id: string; entry_id: string; seq: number }>("session-1");
 			const latestSessionEntry = await db
-				.prepare("SELECT id, type FROM session_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1")
+				.prepare("SELECT id, type FROM entries WHERE session_id = ? ORDER BY seq DESC LIMIT 1")
 				.get<{ id: string; type: string }>("session-1");
 			expect(latestSessionEntry?.type).toBe("leaf");
 			expect(latestBranchRow?.entry_id).toBe(latestSessionEntry?.id);
@@ -285,16 +294,14 @@ END;
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const firstChildId = await session.appendMessage(createAssistantMessage("first child"));
-		await session.moveTo(rootId);
+		await moveSqliteMainLane(session, rootId);
 		const secondChildId = await session.appendMessage(createAssistantMessage("second child"));
 
 		const db = await sqlite.open(databasePath);
 		try {
 			const branchRows = await db
-				.prepare(
-					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY branch_id, entry_seq",
-				)
-				.all<{ branch_id: string; entry_id: string; entry_seq: number }>("session-1");
+				.prepare("SELECT branch_id, entry_id, seq FROM branch_entries WHERE session_id = ? ORDER BY branch_id, seq")
+				.all<{ branch_id: string; entry_id: string; seq: number }>("session-1");
 			const branchIds = [...new Set(branchRows.map((row) => row.branch_id))];
 			expect(branchIds).toHaveLength(2);
 			expect(branchRows.filter((row) => row.entry_id === rootId)).toHaveLength(2);
@@ -318,19 +325,22 @@ END;
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		await session.appendMessage(createAssistantMessage("first child"));
-		await session.appendSessionName("  Reopened Session  ");
-		await session.moveTo(rootId);
+		await appendSqliteSessionName(session, "  Reopened Session  ");
+		await moveSqliteMainLane(session, rootId);
 		await session.appendMessage(createAssistantMessage("branched child"));
 
 		const reopened = await repo.open(await session.getMetadata());
-		expect(await reopened.getSessionName()).toBe("Reopened Session");
-		expect((await reopened.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		expect((await reopened.buildContext()).messages.at(-1)).toMatchObject({
+		expect(await reopened.getName()).toBe("Reopened Session");
+		expect((await buildSqliteContext(reopened)).messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+		expect((await buildSqliteContext(reopened)).messages.at(-1)).toMatchObject({
 			content: [{ type: "text", text: "branched child" }],
 		});
 	});
 
-	it("pages entries by entry_seq cursor", async () => {
+	it("pages entries by seq cursor", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -342,8 +352,10 @@ END;
 			await session.appendMessage(createUserMessage("three")),
 		];
 
-		expect((await session.getEntries({ limit: 2 })).map((entry) => entry.id)).toEqual(ids.slice(0, 2));
-		expect((await session.getEntries({ afterEntrySeq: 1, limit: 2 })).map((entry) => entry.id)).toEqual(ids.slice(1));
+		expect((await getSqliteEntries(session, { limit: 2 })).map((entry) => entry.id)).toEqual(ids.slice(0, 2));
+		expect((await getSqliteEntries(session, { afterEntrySeq: 1, limit: 2 })).map((entry) => entry.id)).toEqual(
+			ids.slice(1),
+		);
 	});
 
 	it("closes the database when create fails after openDatabase succeeds", async () => {
@@ -383,7 +395,7 @@ END;
 		const repo = new SqliteSessionRepository({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
 		const metadata: SqliteSessionMetadata = {
 			id: "missing",
-			createdAt: new Date().toISOString(),
+			createdAt: Date.now(),
 			cwd: root,
 			path: join(root, "sessions.sqlite"),
 		};
@@ -404,7 +416,7 @@ END;
 
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		for (let i = 0; i < 10; i++) await session.appendMessage(createUserMessage(`message ${i}`));
-		await session.getEntries();
+		await getSqliteEntries(session);
 		expect(counts).toEqual({ opens: 1, closes: 0 });
 		await repo[Symbol.asyncDispose]();
 		expect(counts).toEqual({ opens: 1, closes: 1 });
@@ -438,7 +450,7 @@ END;
 
 		const db = await sqlite.open(databasePath);
 		try {
-			await db.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?").run("missing", metadata.id);
+			await db.prepare("UPDATE sessions SET leaf_id = ? WHERE id = ?").run("missing", metadata.id);
 		} finally {
 			await db.close();
 		}
@@ -462,14 +474,14 @@ END;
 		const db = await sqlite.open(databasePath);
 		try {
 			await db
-				.prepare("UPDATE session_entries SET payload = ? WHERE session_id = ? AND id = ?")
+				.prepare("UPDATE entries SET payload = ? WHERE session_id = ? AND id = ?")
 				.run("not json", metadata.id, entryId);
 		} finally {
 			await db.close();
 		}
 
 		const reopened = await repo.open(metadata);
-		await expect(reopened.getEntries()).rejects.toMatchObject({ code: "invalid_entry" });
+		await expect(getSqliteEntries(reopened)).rejects.toMatchObject({ code: "invalid_entry" });
 	});
 
 	it("does not publish connection state when an append transaction fails", async () => {
@@ -503,9 +515,9 @@ END;
 			await db.exec("DROP TRIGGER fail_branch_tip_insert");
 		}
 		const sessionRow = await db
-			.prepare("SELECT active_leaf_id FROM sessions WHERE id = ?")
-			.get<{ active_leaf_id: string | null }>("session-1");
-		expect(sessionRow?.active_leaf_id).toBeNull();
+			.prepare("SELECT leaf_id FROM sessions WHERE id = ?")
+			.get<{ leaf_id: string | null }>("session-1");
+		expect(sessionRow?.leaf_id).toBeNull();
 		expect(await storage.readEntries()).toEqual([]);
 		await expect(
 			storage.appendEntry({
@@ -530,8 +542,8 @@ END;
 		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const userId = await session.appendMessage(createUserMessage("one"));
-		await session.appendThinkingLevelChange("high");
-		await session.appendModelChange("anthropic", "claude-sonnet-4-5");
+		await appendSqliteThinkingLevelChange(session, "high");
+		await appendSqliteModelChange(session, "anthropic", "claude-sonnet-4-5");
 		const assistant = {
 			...createAssistantMessage("two"),
 			provider: "anthropic",
@@ -546,7 +558,7 @@ END;
 			},
 		};
 		await session.appendMessage(assistant);
-		await session.appendCompaction("summary", userId, 200, undefined, false, {
+		await appendSqliteCompaction(session, "summary", userId, 200, undefined, false, {
 			input: 1,
 			output: 2,
 			cacheRead: 3,
@@ -554,7 +566,7 @@ END;
 			totalTokens: 10,
 			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.04, total: 0.1 },
 		});
-		await session.moveTo(userId, {
+		await moveSqliteMainLane(session, userId, {
 			summary: "branch summary",
 			usage: {
 				input: 5,
@@ -565,8 +577,8 @@ END;
 				cost: { input: 0.05, output: 0.06, cacheRead: 0.07, cacheWrite: 0.08, total: 0.26 },
 			},
 		});
-		await session.appendSessionName("  My Session  ");
-		await session.appendLabel(userId, "checkpoint");
+		await appendSqliteSessionName(session, "  My Session  ");
+		await appendSqliteLabel(session, userId, "checkpoint");
 
 		const db = await sqlite.open(databasePath);
 		try {
@@ -588,11 +600,11 @@ END;
 			});
 			const entryRows = await db
 				.prepare(
-					"SELECT session_id, entry_seq, type, payload FROM entry_materialized WHERE session_id = ? ORDER BY entry_seq, type",
+					"SELECT session_id, seq, type, payload FROM entry_materialized WHERE session_id = ? ORDER BY seq, type",
 				)
 				.all<{
 					session_id: string;
-					entry_seq: number;
+					seq: number;
 					type: string;
 					payload: string;
 				}>("session-1");

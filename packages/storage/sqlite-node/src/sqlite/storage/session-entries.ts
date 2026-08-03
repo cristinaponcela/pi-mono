@@ -1,4 +1,5 @@
 import type { SessionTreeEntry, SessionTreeEntryBase } from "@earendil-works/pi-agent-core";
+import type { SqliteDatabase } from "../types.ts";
 import { invalidEntry, isRecord } from "./shared.ts";
 
 export interface SessionEntryRow {
@@ -135,6 +136,10 @@ function entryToPayload<TEntry extends SessionTreeEntry>(entry: TEntry): EntryPa
 export function encodeEntry(entry: SessionTreeEntry): EncodedEntry {
 	validateSessionTreeEntry(entry);
 	return { payload: JSON.stringify(entryToPayload(entry)) };
+}
+
+export async function deleteEntriesForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM entries WHERE session_id = ?").run(sessionId);
 }
 
 export function decodeEntry(row: SessionEntryRow): SessionTreeEntry {

@@ -46,7 +46,7 @@ export async function isCachedBranchValid(
 					e.parent_id,
 					LAG(b.entry_id) OVER (ORDER BY b.entry_seq) AS previous_entry_id
 				FROM branch_entries AS b
-				LEFT JOIN session_entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
+				LEFT JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
 				WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq BETWEEN ? AND ?
 			)
 			SELECT
@@ -93,7 +93,7 @@ export async function readNewestCachedStopSeq(
 		.prepare(
 			`SELECT MAX(b.entry_seq) AS entry_seq
 			FROM branch_entries AS b
-			JOIN session_entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
+			JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
 			WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq <= ?
 				AND (${predicates.join(" OR ")})`,
 		)
@@ -109,9 +109,9 @@ export async function readCachedBranchRows(
 ): Promise<SessionEntryRow[]> {
 	return db
 		.prepare(
-			`SELECT e.session_id, e.id, e.entry_seq, e.parent_id, e.type, e.timestamp, e.payload
+			`SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
 			FROM branch_entries AS b
-			JOIN session_entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
+			JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
 			WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq BETWEEN ? AND ?
 			ORDER BY b.entry_seq`,
 		)
@@ -140,7 +140,7 @@ export async function queryCachedBranchRows(
 		? `WITH boundary AS (
 			SELECT ${oldestFirst ? "MIN" : "MAX"}(stop.entry_seq) AS entry_seq
 			FROM branch_entries AS stop
-			JOIN session_entries AS stop_entry
+			JOIN entries AS stop_entry
 				ON stop_entry.session_id = stop.session_id AND stop_entry.id = stop.entry_id
 			WHERE stop.session_id = ? AND stop.branch_id = ? AND stop.entry_seq <= ?
 				AND (${stopPredicates.join(" OR ")})
@@ -152,9 +152,9 @@ export async function queryCachedBranchRows(
 		)`
 		: "";
 	const sql = `${boundary}
-		SELECT e.session_id, e.id, e.entry_seq, e.parent_id, e.type, e.timestamp, e.payload
+		SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
 		FROM branch_entries AS b
-		JOIN session_entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
+		JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
 		WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq <= ?
 			${range}
 		ORDER BY b.entry_seq ${oldestFirst ? "ASC" : "DESC"}`;
@@ -173,13 +173,13 @@ export async function readCachedEntryRowsByType(
 	// makes SQLite scan the complete cached path before filtering by type.
 	return db
 		.prepare(
-			`SELECT e.session_id, e.id, e.entry_seq, e.parent_id, e.type, e.timestamp, e.payload
-			FROM session_entries AS e INDEXED BY idx_session_entries_session_type
+			`SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
+			FROM entries AS e INDEXED BY idx_entries_session_type_seq
 			CROSS JOIN branch_entries AS b
 			WHERE e.session_id = ? AND e.type = ?
 				AND b.session_id = e.session_id AND b.entry_id = e.id
 				AND b.branch_id = ? AND b.entry_seq <= ?
-			ORDER BY e.entry_seq DESC`,
+			ORDER BY e.seq DESC`,
 		)
 		.all<SessionEntryRow>(sessionId, type, branch.branchId, branch.leafSeq);
 }
@@ -216,18 +216,20 @@ export async function rebuildCachedBranch(
 		const branchId = uuidv7();
 		await db
 			.prepare(
-				`WITH RECURSIVE path(id, entry_seq, parent_id) AS (
-					SELECT id, entry_seq, parent_id
-					FROM session_entries
+				`WITH RECURSIVE path(id, entry_seq, parent_id, type, custom_type) AS (
+					SELECT id, seq, parent_id, type,
+						CASE WHEN type = 'custom' THEN json_extract(payload, '$.customType') ELSE NULL END
+					FROM entries
 					WHERE session_id = ? AND id = ?
 					UNION ALL
-					SELECT parent.id, parent.entry_seq, parent.parent_id
-					FROM session_entries AS parent
+					SELECT parent.id, parent.seq, parent.parent_id, parent.type,
+						CASE WHEN parent.type = 'custom' THEN json_extract(parent.payload, '$.customType') ELSE NULL END
+					FROM entries AS parent
 					JOIN path AS child ON child.parent_id = parent.id
 					WHERE parent.session_id = ?
 				)
-				INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq)
-				SELECT ?, ?, id, entry_seq FROM path`,
+				INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
+				SELECT ?, ?, id, entry_seq, type, custom_type FROM path`,
 			)
 			.run(sessionId, leafId, sessionId, sessionId, branchId);
 		await db
@@ -245,6 +247,24 @@ export async function rebuildCachedBranch(
 	}
 }
 
+async function insertBranchEntry(
+	db: SqliteDatabase,
+	sessionId: string,
+	branchId: string,
+	entryId: string,
+	entrySeq: number,
+	entryType: string,
+	customType: string | null,
+): Promise<void> {
+	await db
+		.prepare(
+			`INSERT INTO branch_entries
+			(session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+		)
+		.run(sessionId, branchId, entryId, entrySeq, entryType, customType);
+}
+
 async function extendBranch(
 	db: SqliteDatabase,
 	sessionId: string,
@@ -252,14 +272,19 @@ async function extendBranch(
 	parentId: string,
 	entryId: string,
 	entrySeq: number,
+	entryType: string,
+	customType: string | null,
 ): Promise<void> {
-	await db
-		.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-		.run(sessionId, branchId, entryId, entrySeq);
+	await insertBranchEntry(db, sessionId, branchId, entryId, entrySeq, entryType, customType);
 	const result = await db
 		.prepare("UPDATE branch_tips SET tip_id = ? WHERE session_id = ? AND branch_id = ? AND tip_id = ?")
 		.run(entryId, sessionId, branchId, parentId);
 	if (result.changes !== 1) throw invalidSession(`branch tip ${parentId} changed during append`);
+}
+
+export async function deleteBranchCacheForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM branch_tips WHERE session_id = ?").run(sessionId);
+	await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(sessionId);
 }
 
 export async function appendEntryToBranchCache(
@@ -267,25 +292,24 @@ export async function appendEntryToBranchCache(
 	sessionId: string,
 	entryId: string,
 	entrySeq: number,
+	entryType: string,
+	customType: string | null,
 	parentId: string | null,
-	repairParent: (parentId: string) => Promise<void>,
 ): Promise<void> {
 	if (parentId === null) {
 		const branchId = uuidv7();
-		await db
-			.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-			.run(sessionId, branchId, entryId, entrySeq);
+		await insertBranchEntry(db, sessionId, branchId, entryId, entrySeq, entryType, customType);
 		await db
 			.prepare("INSERT INTO branch_tips (session_id, tip_id, branch_id) VALUES (?, ?, ?)")
 			.run(sessionId, entryId, branchId);
 		return;
 	}
 
-	let tip = await db
+	const tip = await db
 		.prepare("SELECT branch_id FROM branch_tips WHERE session_id = ? AND tip_id = ?")
 		.get<{ branch_id: string }>(sessionId, parentId);
 	if (tip) {
-		await extendBranch(db, sessionId, tip.branch_id, parentId, entryId, entrySeq);
+		await extendBranch(db, sessionId, tip.branch_id, parentId, entryId, entrySeq, entryType, customType);
 		return;
 	}
 
@@ -298,28 +322,18 @@ export async function appendEntryToBranchCache(
 			LIMIT 1`,
 		)
 		.get<{ branch_id: string; entry_seq: number }>(sessionId, parentId);
-	if (!source) {
-		await repairParent(parentId);
-		tip = await db
-			.prepare("SELECT branch_id FROM branch_tips WHERE session_id = ? AND tip_id = ?")
-			.get<{ branch_id: string }>(sessionId, parentId);
-		if (!tip) throw invalidSession(`branch cache repair did not create tip ${parentId}`);
-		await extendBranch(db, sessionId, tip.branch_id, parentId, entryId, entrySeq);
-		return;
-	}
+	if (!source) throw invalidSession(`branch cache has no branch containing parent entry ${parentId}`);
 
 	const branchId = uuidv7();
 	await db
 		.prepare(
-			`INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq)
-			SELECT session_id, ?, entry_id, entry_seq
+			`INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
+			SELECT session_id, ?, entry_id, entry_seq, entry_type, custom_type
 			FROM branch_entries
 			WHERE session_id = ? AND branch_id = ? AND entry_seq <= ?`,
 		)
 		.run(branchId, sessionId, source.branch_id, source.entry_seq);
-	await db
-		.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-		.run(sessionId, branchId, entryId, entrySeq);
+	await insertBranchEntry(db, sessionId, branchId, entryId, entrySeq, entryType, customType);
 	await db
 		.prepare("INSERT INTO branch_tips (session_id, tip_id, branch_id) VALUES (?, ?, ?)")
 		.run(sessionId, entryId, branchId);
