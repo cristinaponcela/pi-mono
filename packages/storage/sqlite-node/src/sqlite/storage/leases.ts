@@ -18,7 +18,8 @@ export async function upsertLease(
 ): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO leases (session_id, owner, heartbeat) VALUES (?, ?, ?)
+			`INSERT INTO leases (session_id, owner, heartbeat)
+			VALUES (?, ?, ?)
 			ON CONFLICT(session_id) DO UPDATE SET owner = excluded.owner, heartbeat = excluded.heartbeat`,
 		)
 		.run(sessionId, owner, heartbeat);
@@ -26,8 +27,4 @@ export async function upsertLease(
 
 export async function deleteLease(db: SqliteDatabase, sessionId: string): Promise<void> {
 	await db.prepare("DELETE FROM leases WHERE session_id = ?").run(sessionId);
-}
-
-export async function deleteLeasesForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await deleteLease(db, sessionId);
 }

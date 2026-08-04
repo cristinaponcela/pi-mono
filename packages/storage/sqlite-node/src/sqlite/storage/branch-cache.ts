@@ -1,7 +1,6 @@
+import { type Entry, SessionError } from "@earendil-works/pi-agent-core/experimental";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import type { SqliteDatabase } from "../types.ts";
-import type { SessionEntryRow } from "./session-entries.ts";
-import { invalidSession } from "./shared.ts";
 
 /** Derived root-to-tip paths. Canonical parent links remain authoritative. */
 export interface CachedBranch {
@@ -14,13 +13,13 @@ export interface CachedBranchEntryRow {
 	id: string;
 	entry_seq: number;
 	parent_id: string | null;
-	type: SessionEntryRow["type"];
+	type: Entry["type"];
 	timestamp: string;
 	payload: string;
 }
 
 export interface CachedBranchQuery {
-	stopAtType?: SessionEntryRow["type"];
+	stopAtType?: Entry["type"];
 	stopAtId?: string;
 	order?: "newestFirst" | "oldestFirst";
 }
@@ -37,95 +36,6 @@ export async function readCachedBranch(
 		.get<{ branch_id: string; entry_seq: number }>(sessionId, leafId);
 	if (!membership) return undefined;
 	return { branchId: membership.branch_id, leafSeq: membership.entry_seq };
-}
-
-export async function isCachedBranchValid(
-	db: SqliteDatabase,
-	sessionId: string,
-	branch: CachedBranch,
-	leafId: string,
-	startSeq = 0,
-): Promise<boolean> {
-	const result = await db
-		.prepare(
-			`WITH path AS (
-				SELECT
-					b.entry_id,
-					b.entry_seq,
-					e.id AS stored_entry_id,
-					e.parent_id,
-					LAG(b.entry_id) OVER (ORDER BY b.entry_seq) AS previous_entry_id
-				FROM branch_entries AS b
-				LEFT JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
-				WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq BETWEEN ? AND ?
-			)
-			SELECT
-				COUNT(*) AS row_count,
-				COALESCE(SUM(
-					stored_entry_id IS NULL OR
-					(? = 0 AND previous_entry_id IS NULL AND parent_id IS NOT NULL) OR
-					(previous_entry_id IS NOT NULL AND parent_id IS NOT previous_entry_id)
-				), 0) AS invalid_count,
-				COALESCE(MAX(entry_seq = ? AND entry_id = ?), 0) AS contains_leaf
-			FROM path`,
-		)
-		.get<{ row_count: number; invalid_count: number; contains_leaf: number }>(
-			sessionId,
-			branch.branchId,
-			startSeq,
-			branch.leafSeq,
-			startSeq,
-			branch.leafSeq,
-			leafId,
-		);
-	return result?.row_count !== 0 && result?.invalid_count === 0 && result.contains_leaf === 1;
-}
-
-export async function readNewestCachedStopSeq(
-	db: SqliteDatabase,
-	sessionId: string,
-	branch: CachedBranch,
-	stopAtType: SessionEntryRow["type"] | undefined,
-	stopAtId: string | undefined,
-): Promise<number | undefined> {
-	const predicates: string[] = [];
-	const params: unknown[] = [sessionId, branch.branchId, branch.leafSeq];
-	if (stopAtType !== undefined) {
-		predicates.push("e.type = ?");
-		params.push(stopAtType);
-	}
-	if (stopAtId !== undefined) {
-		predicates.push("b.entry_id = ?");
-		params.push(stopAtId);
-	}
-	if (predicates.length === 0) return undefined;
-	const row = await db
-		.prepare(
-			`SELECT MAX(b.entry_seq) AS entry_seq
-			FROM branch_entries AS b
-			JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
-			WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq <= ?
-				AND (${predicates.join(" OR ")})`,
-		)
-		.get<{ entry_seq: number | null }>(...params);
-	return row?.entry_seq ?? undefined;
-}
-
-export async function readCachedBranchRows(
-	db: SqliteDatabase,
-	sessionId: string,
-	branch: CachedBranch,
-	startSeq: number,
-): Promise<CachedBranchEntryRow[]> {
-	return db
-		.prepare(
-			`SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
-			FROM branch_entries AS b
-			JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
-			WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq BETWEEN ? AND ?
-			ORDER BY b.entry_seq`,
-		)
-		.all<CachedBranchEntryRow>(sessionId, branch.branchId, startSeq, branch.leafSeq);
 }
 
 export async function queryCachedBranchRows(
@@ -173,56 +83,9 @@ export async function queryCachedBranchRows(
 	return db.prepare(sql).all<CachedBranchEntryRow>(...params);
 }
 
-export async function readCachedEntryRowsByType(
-	db: SqliteDatabase,
-	sessionId: string,
-	branch: CachedBranch,
-	type: SessionEntryRow["type"],
-): Promise<CachedBranchEntryRow[]> {
-	// Drive the join from the usually sparse entry type. Ordering from branch_entries
-	// makes SQLite scan the complete cached path before filtering by type.
-	return db
-		.prepare(
-			`SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
-			FROM entries AS e INDEXED BY idx_entries_session_type_seq
-			CROSS JOIN branch_entries AS b
-			WHERE e.session_id = ? AND e.type = ?
-				AND b.session_id = e.session_id AND b.entry_id = e.id
-				AND b.branch_id = ? AND b.entry_seq <= ?
-			ORDER BY e.seq DESC`,
-		)
-		.all<CachedBranchEntryRow>(sessionId, type, branch.branchId, branch.leafSeq);
-}
-
-export async function readCachedEntrySeq(
-	db: SqliteDatabase,
-	sessionId: string,
-	branchId: string,
-	entryId: string,
-): Promise<number | undefined> {
-	const row = await db
-		.prepare("SELECT entry_seq FROM branch_entries WHERE session_id = ? AND branch_id = ? AND entry_id = ?")
-		.get<{ entry_seq: number }>(sessionId, branchId, entryId);
-	return row?.entry_seq;
-}
-
-export async function rebuildCachedBranch(
-	db: SqliteDatabase,
-	sessionId: string,
-	leafId: string,
-	branchIdToReplace?: string,
-): Promise<void> {
-	await db.exec("SAVEPOINT rebuild_branch_cache");
+export async function buildCachedBranch(db: SqliteDatabase, sessionId: string, leafId: string): Promise<void> {
+	await db.exec("SAVEPOINT build_branch_cache");
 	try {
-		const tip = await db
-			.prepare("SELECT branch_id FROM branch_tips WHERE session_id = ? AND tip_id = ?")
-			.get<{ branch_id: string }>(sessionId, leafId);
-		const branchIds = new Set([branchIdToReplace, tip?.branch_id].filter((id): id is string => id !== undefined));
-		for (const branchId of branchIds) {
-			await db.prepare("DELETE FROM branch_tips WHERE session_id = ? AND branch_id = ?").run(sessionId, branchId);
-			await db.prepare("DELETE FROM branch_entries WHERE session_id = ? AND branch_id = ?").run(sessionId, branchId);
-		}
-
 		const branchId = uuidv7();
 		await db
 			.prepare(
@@ -245,15 +108,20 @@ export async function rebuildCachedBranch(
 		await db
 			.prepare("INSERT INTO branch_tips (session_id, tip_id, branch_id) VALUES (?, ?, ?)")
 			.run(sessionId, leafId, branchId);
-		await db.exec("RELEASE SAVEPOINT rebuild_branch_cache");
+		await db.exec("RELEASE SAVEPOINT build_branch_cache");
 	} catch (error) {
 		try {
-			await db.exec("ROLLBACK TO SAVEPOINT rebuild_branch_cache");
-			await db.exec("RELEASE SAVEPOINT rebuild_branch_cache");
+			await db.exec("ROLLBACK TO SAVEPOINT build_branch_cache");
+			await db.exec("RELEASE SAVEPOINT build_branch_cache");
 		} catch {
-			// Preserve the original repair failure.
+			// Preserve the original build failure.
 		}
-		throw error;
+		if (error instanceof SessionError) throw error;
+		throw new SessionError(
+			"storage",
+			`Failed to build SQLite branch cache at entry ${leafId}`,
+			error instanceof Error ? error : undefined,
+		);
 	}
 }
 
@@ -289,12 +157,9 @@ async function extendBranch(
 	const result = await db
 		.prepare("UPDATE branch_tips SET tip_id = ? WHERE session_id = ? AND branch_id = ? AND tip_id = ?")
 		.run(entryId, sessionId, branchId, parentId);
-	if (result.changes !== 1) throw invalidSession(`branch tip ${parentId} changed during append`);
-}
-
-export async function deleteBranchCacheForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM branch_tips WHERE session_id = ?").run(sessionId);
-	await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(sessionId);
+	if (result.changes !== 1) {
+		throw new SessionError("invalid_entry", `Branch tip ${parentId} changed during append`);
+	}
 }
 
 export async function appendEntryToBranchCache(
@@ -332,7 +197,9 @@ export async function appendEntryToBranchCache(
 			LIMIT 1`,
 		)
 		.get<{ branch_id: string; entry_seq: number }>(sessionId, parentId);
-	if (!source) throw invalidSession(`branch cache has no branch containing parent entry ${parentId}`);
+	if (!source) {
+		throw new SessionError("invalid_entry", `Branch cache has no branch containing parent entry ${parentId}`);
+	}
 
 	const branchId = uuidv7();
 	await db

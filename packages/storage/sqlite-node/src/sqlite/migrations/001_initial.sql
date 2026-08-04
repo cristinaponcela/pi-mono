@@ -31,11 +31,6 @@ CREATE TABLE IF NOT EXISTS session_sequences (
 	next_seq INTEGER NOT NULL
 ) WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS session_materialized (
-	session_id TEXT PRIMARY KEY,
-	payload TEXT NOT NULL
-) WITHOUT ROWID;
-
 -- Derived branch cache. Parent links in entries remain canonical; this cache
 -- exists only to make branch scans cheap.
 CREATE TABLE IF NOT EXISTS branch_entries (

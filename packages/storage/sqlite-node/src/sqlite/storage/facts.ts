@@ -37,7 +37,3 @@ export async function readLatestFact(
 		)
 		.get<FactRow>(sessionId, kind, key);
 }
-
-export async function deleteFactsForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM facts WHERE session_id = ?").run(sessionId);
-}

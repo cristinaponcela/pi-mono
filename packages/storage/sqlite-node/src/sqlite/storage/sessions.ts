@@ -1,4 +1,4 @@
-import { SessionError } from "@earendil-works/pi-agent-core";
+import { SessionError } from "@earendil-works/pi-agent-core/experimental";
 import type { SqliteSessionMetadata } from "../types.ts";
 
 export interface SessionRow {
@@ -16,13 +16,13 @@ function parseMetadata(metadata: string | null, sessionId: string): Record<strin
 		parsed = JSON.parse(metadata);
 	} catch (error) {
 		throw new SessionError(
-			"invalid_session",
+			"storage",
 			`Invalid SQLite session ${sessionId}: metadata is not valid JSON`,
 			error instanceof Error ? error : undefined,
 		);
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		throw new SessionError("invalid_session", `Invalid SQLite session ${sessionId}: metadata must be an object`);
+		throw new SessionError("storage", `Invalid SQLite session ${sessionId}: metadata must be an object`);
 	}
 	return parsed as Record<string, unknown>;
 }

@@ -93,7 +93,7 @@ export async function setLaneLeaf(
 	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 }
 
-export async function appendLaneMove(
+async function appendLaneMove(
 	db: SqliteDatabase,
 	sessionId: string,
 	seq: number,
@@ -103,9 +103,4 @@ export async function appendLaneMove(
 	await db
 		.prepare("INSERT INTO lane_moves (session_id, seq, lane, leaf_id) VALUES (?, ?, ?, ?)")
 		.run(sessionId, seq, lane, leafId);
-}
-
-export async function deleteLanesForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM lane_moves WHERE session_id = ?").run(sessionId);
-	await db.prepare("DELETE FROM lanes WHERE session_id = ?").run(sessionId);
 }

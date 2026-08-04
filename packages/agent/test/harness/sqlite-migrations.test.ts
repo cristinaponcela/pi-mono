@@ -122,7 +122,6 @@ describe("SQLite migrations", () => {
 					"session_sequences",
 					"branch_entries",
 					"branch_tips",
-					"session_materialized",
 				]),
 			);
 			const sessionColumns = await db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
@@ -144,7 +143,6 @@ describe("SQLite migrations", () => {
 				"records",
 				"lane_moves",
 				"facts",
-				"session_materialized",
 			]) {
 				const table = tables.find((row) => row.name === tableName);
 				expect(table?.sql).toContain("WITHOUT ROWID");
@@ -604,21 +602,26 @@ END;
 		await appendSqliteSessionName(session, "  My Session  ");
 		await appendSqliteLabel(session, userId, "checkpoint");
 
+		expect(await session.getStats()).toMatchObject({
+			messageCount: 2,
+			cachedTokens: 50,
+			uncachedTokens: 128,
+			totalTokens: 211,
+			costTotal: 0.73,
+		});
+
 		const db = await sqlite.open(databasePath);
 		try {
-			const row = await db.prepare("SELECT session_id, payload FROM session_materialized WHERE session_id = ?").get<{
-				session_id: string;
-				payload: string;
-			}>("session-1");
-			expect(row).toBeDefined();
-			expect(row?.session_id).toBe("session-1");
-			expect(JSON.parse(row?.payload ?? "null")).toMatchObject({
-				messageCount: 2,
-				cachedTokens: 50,
-				uncachedTokens: 128,
-				totalTokens: 211,
-				costTotal: 0.73,
-			});
+			expect(
+				await db
+					.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_materialized'")
+					.get(),
+			).toBeUndefined();
+			expect(
+				await db
+					.prepare("SELECT type, COUNT(*) AS count FROM records WHERE session_id = ? AND type = ? GROUP BY type")
+					.get<{ type: string; count: number }>("session-1", "usage"),
+			).toEqual({ type: "usage", count: 3 });
 			const nameFact = await db
 				.prepare("SELECT value FROM facts WHERE session_id = ? AND kind = 'name' ORDER BY seq DESC LIMIT 1")
 				.get<{ value: string }>("session-1");

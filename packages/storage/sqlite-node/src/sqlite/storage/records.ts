@@ -43,6 +43,12 @@ export async function appendRecordRow(db: SqliteDatabase, sessionId: string, rec
 		);
 }
 
+export async function idExistsInRecords(db: SqliteDatabase, sessionId: string, id: string): Promise<boolean> {
+	return !!(await db
+		.prepare("SELECT 1 AS found FROM records WHERE session_id = ? AND id = ? LIMIT 1")
+		.get<{ found: number }>(sessionId, id));
+}
+
 export async function readRecordRows(
 	db: SqliteDatabase,
 	sessionId: string,
@@ -84,8 +90,4 @@ export async function readRecordRows(
 			ORDER BY seq ${direction}${limit}`,
 		)
 		.all<RecordRow>(...params);
-}
-
-export async function deleteRecordsForSession(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM records WHERE session_id = ?").run(sessionId);
 }
