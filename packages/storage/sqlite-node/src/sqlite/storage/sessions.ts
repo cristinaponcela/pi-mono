@@ -1,4 +1,4 @@
-import { SessionError } from "@earendil-works/pi-agent-core/experimental";
+import { assertJsonSerializable, SessionError } from "@earendil-works/pi-agent-core/experimental";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
 
 export interface SessionRow {
@@ -39,13 +39,22 @@ export async function sessionExists(db: SqliteDatabase, sessionId: string): Prom
 	return !!(await db.prepare("SELECT 1 AS found FROM sessions WHERE id = ?").get<{ found: number }>(sessionId));
 }
 
+function serializeMetadata(metadata: Record<string, unknown> | undefined): string | null {
+	if (metadata === undefined) return null;
+	if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
+		throw new SessionError("invalid_payload", "SQLite session metadata must be an object");
+	}
+	assertJsonSerializable(metadata);
+	return JSON.stringify(metadata);
+}
+
 export async function insertSessionRow(db: SqliteDatabase, session: NewSessionRow): Promise<void> {
 	await db
 		.prepare("INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)")
 		.run(
 			session.id,
 			session.createdAt,
-			session.metadata === undefined ? null : JSON.stringify(session.metadata),
+			serializeMetadata(session.metadata),
 			session.cwd,
 			session.parentSessionId ?? null,
 		);
