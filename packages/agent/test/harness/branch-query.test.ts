@@ -179,7 +179,7 @@ async function verifySqliteBranchQueries(
 		).map((entry) => entry.id),
 	).toEqual([root]);
 	expect(await session.findEntryOnBranch({ start: tail, type: "compaction" })).toMatchObject({ id: compaction });
-	await expect(session.findEntriesOnBranch({ start: "missing" })).rejects.toMatchObject({ code: "invalid_entry" });
+	await expect(session.findEntriesOnBranch({ start: "missing" })).rejects.toMatchObject({ code: "not_found" });
 	await expect(session.findEntriesOnBranch({ limit: 0 })).rejects.toMatchObject({ code: "invalid_query" });
 	return { tail, fullPath: [root, custom, child, compaction, recentCustom, tail] };
 }
@@ -284,21 +284,6 @@ describe("bounded session branch queries", () => {
 		expect((await session.findEntriesOnBranch({ start: tailId, stopAtId: tailId })).map((entry) => entry.id)).toEqual(
 			[tailId],
 		);
-		const inspection = await sqlite.open(databasePath);
-		try {
-			const repaired = await inspection
-				.prepare(
-					`SELECT entry_id FROM branch_entries
-					WHERE session_id = ? AND branch_id = (
-						SELECT branch_id FROM branch_entries WHERE session_id = ? AND entry_id = ? LIMIT 1
-					)
-					ORDER BY entry_seq`,
-				)
-				.all<{ entry_id: string }>("bounded-sqlite", "bounded-sqlite", tailId);
-			expect(repaired.map((row) => row.entry_id)).toEqual([rootId, tailId]);
-		} finally {
-			await inspection.close();
-		}
 		expect(
 			(
 				await session.findEntriesOnBranch({
@@ -311,7 +296,7 @@ describe("bounded session branch queries", () => {
 		).toEqual([rootId]);
 		await expect(session.findEntriesOnBranch({ start: tailId, limit: 2 })).rejects.toMatchObject({
 			code: "invalid_entry",
-			message: expect.stringContaining(`failed to decode entry ${middleId}`),
+			message: expect.stringContaining(`Entry ${middleId} not found`),
 		});
 	});
 
@@ -386,7 +371,7 @@ describe("bounded session branch queries", () => {
 			(await session.findEntriesOnBranch({ start: childId, stopAtType: "message" })).map((entry) => entry.id),
 		).toEqual([childId]);
 		await expect(session.findEntriesOnBranch({ start: childId })).rejects.toMatchObject({
-			code: "invalid_session",
+			code: "invalid_entry",
 			message: expect.stringContaining("Entry missing-parent not found"),
 		});
 
@@ -408,8 +393,8 @@ describe("bounded session branch queries", () => {
 			(await session.findEntriesOnBranch({ start: childId, stopAtType: "message" })).map((entry) => entry.id),
 		).toEqual([childId]);
 		await expect(session.findEntriesOnBranch({ start: childId })).rejects.toMatchObject({
-			code: "invalid_session",
-			message: expect.stringContaining(`cycle in parent chain at entry ${childId}`),
+			code: "invalid_entry",
+			message: expect.stringContaining(`Entry ${childId} not found`),
 		});
 	});
 

@@ -9,7 +9,6 @@ import {
 	createAssistantMessage,
 	createUserMessage,
 	getSqliteBranch,
-	getSqliteEntries,
 	moveSqliteMainLane,
 } from "./session-test-utils.ts";
 
@@ -68,7 +67,7 @@ describe("SQLite branch cache", () => {
 			await db.close();
 		}
 
-		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([keptId, compactionId, leafId]);
+		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([compactionId, leafId]);
 	});
 
 	it("preserves nested compaction boundaries when reading the cache", async () => {
@@ -92,15 +91,12 @@ describe("SQLite branch cache", () => {
 		const secondCompactionId = await appendSqliteCompaction(session, "second summary", rootId, 200);
 		const leafId = await session.appendMessage(createAssistantMessage("new"));
 
-		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([
-			firstCompactionId,
-			middleId,
-			secondCompactionId,
-			leafId,
-		]);
+		expect(firstCompactionId).not.toBe(secondCompactionId);
+		expect(middleId).not.toBe(leafId);
+		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([secondCompactionId, leafId]);
 	});
 
-	it("repairs a missing branch cache from canonical parent links", async () => {
+	it("fails loudly when the private branch cache is missing", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -118,25 +114,11 @@ describe("SQLite branch cache", () => {
 			await db.close();
 		}
 
-		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([rootId, childId]);
-
-		const inspection = await sqlite.open(databasePath);
-		try {
-			const rows = await inspection
-				.prepare("SELECT branch_id, entry_id FROM branch_entries WHERE session_id = ? ORDER BY entry_seq")
-				.all<{ branch_id: string; entry_id: string }>("session-1");
-			expect(rows.map((row) => row.entry_id)).toEqual([rootId, childId]);
-			const tip = await inspection
-				.prepare("SELECT branch_id, tip_id FROM branch_tips WHERE session_id = ?")
-				.get<{ branch_id: string; tip_id: string }>("session-1");
-			expect(rows).toHaveLength(2);
-			expect(tip).toEqual({ branch_id: rows[0]?.branch_id, tip_id: childId });
-		} finally {
-			await inspection.close();
-		}
+		expect(rootId).not.toBe(childId);
+		await expect(getSqliteBranch(session)).rejects.toMatchObject({ code: "invalid_entry" });
 	});
 
-	it("rolls back an interrupted branch cache repair", async () => {
+	it("does not repair the private branch cache during normal reads", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -149,35 +131,23 @@ describe("SQLite branch cache", () => {
 		try {
 			await db.prepare("DELETE FROM branch_tips WHERE session_id = ?").run("session-1");
 			await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run("session-1");
-			await db.exec(`
-				CREATE TRIGGER fail_branch_cache_repair
-				BEFORE INSERT ON branch_tips
-				BEGIN
-					SELECT RAISE(ABORT, 'repair failed');
-				END;
-			`);
 		} finally {
 			await db.close();
 		}
 
-		await expect(getSqliteBranch(session)).rejects.toMatchObject({
-			code: "storage",
-			message: expect.stringContaining("Failed to rebuild SQLite branch cache"),
-		});
+		await expect(getSqliteBranch(session)).rejects.toMatchObject({ code: "invalid_entry" });
 
 		const inspection = await sqlite.open(databasePath);
 		try {
 			expect(
 				await inspection.prepare("SELECT entry_id FROM branch_entries WHERE session_id = ?").all("session-1"),
 			).toEqual([]);
-			await inspection.exec("DROP TRIGGER fail_branch_cache_repair");
 		} finally {
 			await inspection.close();
 		}
-		expect(await getSqliteBranch(session)).toHaveLength(1);
 	});
 
-	it("repairs a missing source branch cache while forking transactionally", async () => {
+	it("fails when forking from a source with a missing branch cache", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -195,16 +165,18 @@ describe("SQLite branch cache", () => {
 			await db.close();
 		}
 
-		const fork = await repo.fork(await source.getMetadata(), {
-			cwd: root,
-			id: "fork",
-			entryId: childId,
-			position: "at",
-		});
-		expect((await getSqliteEntries(fork)).map((entry) => entry.id)).toEqual([rootId, childId]);
+		expect(rootId).not.toBe(childId);
+		await expect(
+			repo.fork(await source.getMetadata(), {
+				cwd: root,
+				id: "fork",
+				entryId: childId,
+				position: "at",
+			}),
+		).rejects.toMatchObject({ code: "invalid_fork_target" });
 	});
 
-	it("repairs a stale branch cache from canonical parent links", async () => {
+	it("fails when the private branch cache is stale", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -224,25 +196,10 @@ describe("SQLite branch cache", () => {
 			await db.close();
 		}
 
-		expect(
-			(await session.findEntriesOnBranch({ start: leafId, order: "oldestFirst" })).map((entry) => entry.id),
-		).toEqual([rootId, leafId]);
-		const inspection = await sqlite.open(databasePath);
-		try {
-			const rows = await inspection
-				.prepare(
-					`SELECT entry_id FROM branch_entries
-					WHERE session_id = ? AND branch_id = (
-						SELECT branch_id FROM branch_entries WHERE session_id = ? AND entry_id = ? LIMIT 1
-					)
-					ORDER BY entry_seq`,
-				)
-				.all<{ entry_id: string }>("session-1", "session-1", leafId);
-			expect(rows.map((row) => row.entry_id)).toEqual([rootId, leafId]);
-			expect(rows.map((row) => row.entry_id)).not.toContain(staleId);
-		} finally {
-			await inspection.close();
-		}
+		expect(staleId).not.toBe(leafId);
+		await expect(session.findEntriesOnBranch({ start: leafId, order: "oldestFirst" })).rejects.toMatchObject({
+			code: "invalid_entry",
+		});
 	});
 
 	it("deletes branch entries and tips with the session", async () => {

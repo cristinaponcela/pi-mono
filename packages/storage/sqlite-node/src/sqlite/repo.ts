@@ -145,23 +145,89 @@ function entryRowFromCached(row: CachedBranchEntryRow): EntryRow {
 	return { ...row, seq: row.entry_seq, type: row.type as Entry["type"] };
 }
 
+function readObjectPayload(row: EntryRow): Record<string, unknown> {
+	const payload = JSON.parse(row.payload) as unknown;
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+		throw new Error("Payload is not an object");
+	}
+	return payload as Record<string, unknown>;
+}
+
 function decodeEntry(row: EntryRow): Entry {
 	try {
-		const payload = JSON.parse(row.payload) as Record<string, unknown>;
+		const payload = readObjectPayload(row);
 		const timestamp = timestampFromText(row.timestamp);
 		if (!Number.isFinite(timestamp)) throw new Error(`Invalid timestamp ${row.timestamp}`);
-		return {
-			...payload,
-			type: row.type,
-			id: row.id,
-			seq: row.seq,
-			parentId: row.parent_id,
-			timestamp,
-		} as Entry;
+		const base = { id: row.id, seq: row.seq, parentId: row.parent_id, timestamp };
+		switch (row.type) {
+			case "message":
+				if (typeof payload.message !== "object" || payload.message === null) throw new Error("Missing message");
+				return {
+					...base,
+					type: "message",
+					message: payload.message as Extract<Entry, { type: "message" }>["message"],
+					...(payload.terminate === true ? { terminate: true as const } : {}),
+				};
+			case "model_change":
+				if (typeof payload.provider !== "string" || typeof payload.modelId !== "string") {
+					throw new Error("Invalid model_change payload");
+				}
+				return { ...base, type: "model_change", provider: payload.provider, modelId: payload.modelId };
+			case "thinking_level_change":
+				if (typeof payload.thinkingLevel !== "string") throw new Error("Invalid thinking_level_change payload");
+				return { ...base, type: "thinking_level_change", thinkingLevel: payload.thinkingLevel };
+			case "active_tools_change":
+				if (!Array.isArray(payload.activeToolNames)) throw new Error("Invalid active_tools_change payload");
+				if (payload.activeToolNames.some((value) => typeof value !== "string")) {
+					throw new Error("Invalid active_tools_change payload");
+				}
+				return { ...base, type: "active_tools_change", activeToolNames: payload.activeToolNames };
+			case "compaction":
+				if (
+					typeof payload.summary !== "string" ||
+					!Array.isArray(payload.retainedTail) ||
+					typeof payload.tokensBefore !== "number"
+				) {
+					throw new Error("Invalid compaction payload");
+				}
+				return {
+					...base,
+					type: "compaction",
+					summary: payload.summary,
+					retainedTail: payload.retainedTail as Extract<Entry, { type: "compaction" }>["retainedTail"],
+					tokensBefore: payload.tokensBefore,
+					...(Object.hasOwn(payload, "details") ? { details: payload.details } : {}),
+					...(Object.hasOwn(payload, "usage")
+						? { usage: payload.usage as Extract<Entry, { type: "compaction" }>["usage"] }
+						: {}),
+				};
+			case "branch_summary":
+				if (typeof payload.fromId !== "string" || typeof payload.summary !== "string") {
+					throw new Error("Invalid branch_summary payload");
+				}
+				return {
+					...base,
+					type: "branch_summary",
+					fromId: payload.fromId,
+					summary: payload.summary,
+					...(Object.hasOwn(payload, "details") ? { details: payload.details } : {}),
+					...(Object.hasOwn(payload, "usage")
+						? { usage: payload.usage as Extract<Entry, { type: "branch_summary" }>["usage"] }
+						: {}),
+				};
+			case "custom":
+				if (typeof payload.customType !== "string") throw new Error("Invalid custom payload");
+				return {
+					...base,
+					type: "custom",
+					customType: payload.customType,
+					...(Object.hasOwn(payload, "data") ? { data: payload.data } : {}),
+				};
+		}
 	} catch (error) {
 		throw new SessionError(
 			"invalid_entry",
-			`Invalid SQLite session entry ${row.id}: failed to decode payload`,
+			`Invalid SQLite session entry ${row.id}: failed to decode entry ${row.id}`,
 			error instanceof Error ? error : undefined,
 		);
 	}
@@ -190,6 +256,21 @@ function decodeRecord(row: { seq: number; timestamp: string; payload: string }):
 			`Invalid SQLite session record at sequence ${row.seq}: failed to decode payload`,
 			error instanceof Error ? error : undefined,
 		);
+	}
+}
+
+function validateCachedBranchRows(rows: readonly CachedBranchEntryRow[], query: BranchBounds): void {
+	if (rows.length === 0) return;
+	const path = [...rows].sort((left, right) => left.entry_seq - right.entry_seq);
+	if (query.stopAtId === undefined && query.stopAtType === undefined && path[0]?.parent_id !== null) {
+		throw new SessionError("invalid_entry", `Entry ${path[0]?.parent_id} not found`);
+	}
+	for (let index = 1; index < path.length; index++) {
+		const previous = path[index - 1]!;
+		const current = path[index]!;
+		if (current.parent_id !== previous.id) {
+			throw new SessionError("invalid_entry", `Entry ${current.parent_id} not found`);
+		}
 	}
 }
 
@@ -339,16 +420,17 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 		});
 	}
 
-	async appendRecord<TRecord extends LaneRecord>(record: NewRecord<TRecord>): Promise<TRecord> {
+	async appendRecord<TRecord extends LaneRecord>(record: NewRecord<TRecord>): Promise<TRecord>;
+	async appendRecord(record: NewRecord): Promise<LaneRecord> {
 		return this.operations.enqueue(async () => {
-			let committed: TRecord | undefined;
+			let committed: LaneRecord | undefined;
 			await this.db.transaction(async () => {
 				if (!(await readLane(this.db, this.metadata.id, record.lane))) {
 					throw new SessionError("invalid_lane", `Lane not found: ${record.lane}`);
 				}
 				await assertUnusedId(this.db, this.metadata.id, record.id);
 				const seq = await getNextSequence(this.db, this.metadata.id);
-				committed = { ...record, seq, timestamp: Date.now() } as unknown as TRecord;
+				committed = { ...record, seq, timestamp: Date.now() };
 				await appendRecordRow(this.db, this.metadata.id, {
 					seq,
 					id: record.id,
@@ -369,7 +451,8 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 				}
 				await advanceSequence(this.db, this.metadata.id, seq);
 			});
-			return structuredClone(committed as TRecord);
+			if (!committed) throw new SessionError("storage", "SQLite record append did not commit");
+			return structuredClone(committed);
 		});
 	}
 
@@ -403,6 +486,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 			throw new SessionError("invalid_entry", `Branch cache missing entry ${query.start}`);
 		}
 		const rows = await queryCachedBranchRows(this.db, this.metadata.id, cached, query);
+		validateCachedBranchRows(rows, query);
 		const entries = rows
 			.map(entryRowFromCached)
 			.map(decodeEntry)
@@ -706,47 +790,57 @@ export class SqliteSessionRepository
 			const createdAt = Date.now();
 			const metadata = options.metadata ?? sourceMetadata.metadata;
 
-			await db.transaction(async () => {
-				await db
-					.prepare(
-						"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)",
-					)
-					.run(
-						id,
-						timestampToText(createdAt),
-						metadata === undefined ? null : JSON.stringify(metadata),
-						options.cwd,
-						options.parentSessionId ?? source.id,
-					);
-				await db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(id, 1);
-				await db
-					.prepare("INSERT INTO session_materialized (session_id, payload) VALUES (?, ?)")
-					.run(id, JSON.stringify(emptyStats()));
-
-				let nextSeq = 1;
-				const allocateSeq = () => nextSeq++;
-				for (const entry of entries) {
+			try {
+				await db.transaction(async () => {
 					await db
 						.prepare(
-							"INSERT INTO entries (session_id, id, seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+							"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)",
 						)
-						.run(id, entry.id, allocateSeq(), entry.parent_id, entry.type, entry.timestamp, entry.payload);
-				}
+						.run(
+							id,
+							timestampToText(createdAt),
+							metadata === undefined ? null : JSON.stringify(metadata),
+							options.cwd,
+							options.parentSessionId ?? source.id,
+						);
+					await db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(id, 1);
+					await db
+						.prepare("INSERT INTO session_materialized (session_id, payload) VALUES (?, ?)")
+						.run(id, JSON.stringify(emptyStats()));
 
-				if (options.scope === "tree") {
-					for (const lane of lanes) await insertLane(db, id, allocateSeq(), lane.lane, lane.leafId);
-				} else {
-					await createInitialLane(db, id, "main", branchForkTargetId);
-				}
+					let nextSeq = 1;
+					const allocateSeq = () => nextSeq++;
+					for (const entry of entries) {
+						await db
+							.prepare(
+								"INSERT INTO entries (session_id, id, seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+							)
+							.run(id, entry.id, allocateSeq(), entry.parent_id, entry.type, entry.timestamp, entry.payload);
+					}
 
-				if (latestName?.value !== undefined && latestName.value !== null) {
-					await appendFact(db, id, allocateSeq(), "name", null, latestName.value);
-				}
-				for (const label of labelsToCopy) await appendFact(db, id, allocateSeq(), "label", label.key, label.value);
+					if (options.scope === "tree") {
+						for (const lane of lanes) await insertLane(db, id, allocateSeq(), lane.lane, lane.leafId);
+					} else {
+						await createInitialLane(db, id, "main", branchForkTargetId);
+					}
 
-				await db.prepare("UPDATE session_sequences SET next_seq = ? WHERE session_id = ?").run(nextSeq, id);
-				for (const tip of branchTips) await rebuildCachedBranch(db, id, tip);
-			});
+					if (latestName?.value !== undefined && latestName.value !== null) {
+						await appendFact(db, id, allocateSeq(), "name", null, latestName.value);
+					}
+					for (const label of labelsToCopy)
+						await appendFact(db, id, allocateSeq(), "label", label.key, label.value);
+
+					await db.prepare("UPDATE session_sequences SET next_seq = ? WHERE session_id = ?").run(nextSeq, id);
+					for (const tip of branchTips) await rebuildCachedBranch(db, id, tip);
+				});
+			} catch (error) {
+				if (error instanceof SessionError) throw error;
+				throw new SessionError(
+					"storage",
+					`Failed to fork SQLite session ${id}`,
+					error instanceof Error ? error : undefined,
+				);
+			}
 
 			return new Session(
 				await loadStorage(db, {

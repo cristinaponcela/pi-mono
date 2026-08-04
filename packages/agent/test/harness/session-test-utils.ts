@@ -97,15 +97,8 @@ export async function moveSqliteMainLane(
 export async function getSqliteBranch(session: SqliteTestSession, fromId?: string | null): Promise<Entry[]> {
 	const start = fromId === undefined ? await session.getLeafId() : fromId;
 	if (start === null) return [];
-	const path = await session.findEntriesOnBranch({ start, order: "oldestFirst" });
-	let compactionIndex = -1;
-	for (let index = path.length - 1; index >= 0; index--) {
-		if (path[index]?.type === "compaction") {
-			compactionIndex = index;
-			break;
-		}
-	}
-	return compactionIndex === -1 ? path : path.slice(compactionIndex);
+	const newestWindow = await session.findEntriesOnBranch({ start, stopAtType: "compaction" });
+	return newestWindow.reverse();
 }
 
 export async function getSqliteEntries(

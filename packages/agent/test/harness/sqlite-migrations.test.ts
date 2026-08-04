@@ -13,14 +13,11 @@ import {
 	SqliteSessionRepository,
 	type SqliteStatement,
 } from "../../../storage/sqlite-node/src/index.ts";
-import { SqliteSessionConnection } from "../../../storage/sqlite-node/src/sqlite/storage/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import {
 	appendSqliteCompaction,
 	appendSqliteLabel,
-	appendSqliteModelChange,
 	appendSqliteSessionName,
-	appendSqliteThinkingLevelChange,
 	buildSqliteContext,
 	createAssistantMessage,
 	createUserMessage,
@@ -129,7 +126,10 @@ describe("SQLite migrations", () => {
 				]),
 			);
 			const sessionColumns = await db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
-			expect(sessionColumns.map((column) => column.name)).toContain("leaf_id");
+			expect(sessionColumns.map((column) => column.name)).not.toContain("leaf_id");
+			expect(tables.map((row) => row.name)).toEqual(
+				expect.arrayContaining(["lanes", "records", "lane_moves", "facts", "leases"]),
+			);
 			const branchIndexes = await db
 				.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'branch_entries'")
 				.all<{ name: string }>();
@@ -140,6 +140,10 @@ describe("SQLite migrations", () => {
 				"session_sequences",
 				"branch_entries",
 				"branch_tips",
+				"lanes",
+				"records",
+				"lane_moves",
+				"facts",
 				"session_materialized",
 			]) {
 				const table = tables.find((row) => row.name === tableName);
@@ -150,7 +154,7 @@ describe("SQLite migrations", () => {
 		}
 	});
 
-	it("clears legacy branch projections when adding explicit tips", async () => {
+	it("adds lane tables without rewriting the branch cache", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const sqlite = createNodeSqliteFactory();
@@ -164,12 +168,16 @@ describe("SQLite migrations", () => {
 				.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
 				.run(initial.id, "2026-01-01T00:00:00.000Z");
 			await db
-				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, seq) VALUES (?, ?, ?, ?)")
-				.run("session-1", "legacy-branch", "entry-1", 1);
+				.prepare(
+					"INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type) VALUES (?, ?, ?, ?, ?, ?)",
+				)
+				.run("session-1", "legacy-branch", "entry-1", 1, "message", null);
 
 			await applyMigrations(db);
 
-			expect(await db.prepare("SELECT entry_id FROM branch_entries").all<{ entry_id: string }>()).toEqual([]);
+			expect(await db.prepare("SELECT entry_id FROM branch_entries").all<{ entry_id: string }>()).toEqual([
+				{ entry_id: "entry-1" },
+			]);
 			expect(
 				await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'branch_tips'").get(),
 			).toBeDefined();
@@ -244,7 +252,7 @@ END;
 		}
 	});
 
-	it("materializes active leaf id in sessions transactionally", async () => {
+	it("materializes the main lane leaf transactionally", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -258,24 +266,13 @@ END;
 		const db = await sqlite.open(databasePath);
 		try {
 			const row = await db
-				.prepare("SELECT leaf_id FROM sessions WHERE id = ?")
-				.get<{ leaf_id: string | null }>("session-1");
+				.prepare("SELECT leaf_id FROM lanes WHERE session_id = ? AND lane = ?")
+				.get<{ leaf_id: string | null }>("session-1", "main");
 			expect(row?.leaf_id).toBe(rootId);
-			const latestBranchRow = await db
-				.prepare(
-					"SELECT branch_id, entry_id, seq FROM branch_entries WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
-				)
-				.get<{ branch_id: string; entry_id: string; seq: number }>("session-1");
-			const latestSessionEntry = await db
-				.prepare("SELECT id, type FROM entries WHERE session_id = ? ORDER BY seq DESC LIMIT 1")
-				.get<{ id: string; type: string }>("session-1");
-			expect(latestSessionEntry?.type).toBe("leaf");
-			expect(latestBranchRow?.entry_id).toBe(latestSessionEntry?.id);
-			if (!latestBranchRow) throw new Error("Missing latest branch row");
-			const branchTip = await db
-				.prepare("SELECT branch_id, tip_id FROM branch_tips WHERE session_id = ? AND branch_id = ?")
-				.get<{ branch_id: string; tip_id: string }>("session-1", latestBranchRow.branch_id);
-			expect(branchTip?.tip_id).toBe(latestSessionEntry?.id);
+			const latestLaneMove = await db
+				.prepare("SELECT lane, leaf_id FROM lane_moves WHERE session_id = ? ORDER BY seq DESC LIMIT 1")
+				.get<{ lane: string; leaf_id: string | null }>("session-1");
+			expect(latestLaneMove).toEqual({ lane: "main", leaf_id: rootId });
 		} finally {
 			await db.close();
 		}
@@ -300,8 +297,10 @@ END;
 		const db = await sqlite.open(databasePath);
 		try {
 			const branchRows = await db
-				.prepare("SELECT branch_id, entry_id, seq FROM branch_entries WHERE session_id = ? ORDER BY branch_id, seq")
-				.all<{ branch_id: string; entry_id: string; seq: number }>("session-1");
+				.prepare(
+					"SELECT branch_id, entry_id, entry_seq FROM branch_entries WHERE session_id = ? ORDER BY branch_id, entry_seq",
+				)
+				.all<{ branch_id: string; entry_id: string; entry_seq: number }>("session-1");
 			const branchIds = [...new Set(branchRows.map((row) => row.branch_id))];
 			expect(branchIds).toHaveLength(2);
 			expect(branchRows.filter((row) => row.entry_id === rootId)).toHaveLength(2);
@@ -439,7 +438,7 @@ END;
 		expect(counts).toEqual({ opens: 1, closes: 1 });
 	});
 
-	it("rejects a missing active leaf when opened", async () => {
+	it("rejects a missing lane leaf when appending", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -450,14 +449,17 @@ END;
 
 		const db = await sqlite.open(databasePath);
 		try {
-			await db.prepare("UPDATE sessions SET leaf_id = ? WHERE id = ?").run("missing", metadata.id);
+			await db
+				.prepare("UPDATE lanes SET leaf_id = ? WHERE session_id = ? AND lane = ?")
+				.run("missing", metadata.id, "main");
 		} finally {
 			await db.close();
 		}
 
-		await expect(repo.open(metadata)).rejects.toMatchObject({
-			code: "invalid_session",
-			message: "Entry missing not found",
+		const reopened = await repo.open(metadata);
+		await expect(reopened.appendMessage(createUserMessage("after corruption"))).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining("Entry missing not found"),
 		});
 	});
 
@@ -487,51 +489,31 @@ END;
 	it("does not publish connection state when an append transaction fails", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
 		const db = await sqlite.open(databasePath);
-		await applyMigrations(db);
-		const storage = await SqliteSessionConnection.create(db, databasePath, {
-			cwd: root,
-			sessionId: "session-1",
-		});
-		await db.exec(`
-			CREATE TEMP TRIGGER fail_branch_tip_insert
-			BEFORE INSERT ON branch_tips
-			BEGIN
-				SELECT RAISE(ABORT, 'branch insert failed');
-			END;
-		`);
-
-		const rootEntry = {
-			type: "message" as const,
-			id: "root",
-			parentId: null,
-			timestamp: new Date().toISOString(),
-			message: createUserMessage("root"),
-		};
 		try {
-			await expect(storage.appendEntry(rootEntry)).rejects.toMatchObject({ code: "storage" });
-		} finally {
+			await db.exec(`
+				CREATE TRIGGER fail_branch_tip_insert
+				BEFORE INSERT ON branch_tips
+				BEGIN
+					SELECT RAISE(ABORT, 'branch insert failed');
+				END;
+			`);
+			await expect(session.appendMessage(createUserMessage("root"))).rejects.toThrow("branch insert failed");
+			const lane = await db
+				.prepare("SELECT leaf_id FROM lanes WHERE session_id = ? AND lane = ?")
+				.get<{ leaf_id: string | null }>("session-1", "main");
+			expect(lane?.leaf_id).toBeNull();
+			expect(await db.prepare("SELECT id FROM entries WHERE session_id = ?").all("session-1")).toEqual([]);
 			await db.exec("DROP TRIGGER fail_branch_tip_insert");
+		} finally {
+			await db.close();
 		}
-		const sessionRow = await db
-			.prepare("SELECT leaf_id FROM sessions WHERE id = ?")
-			.get<{ leaf_id: string | null }>("session-1");
-		expect(sessionRow?.leaf_id).toBeNull();
-		expect(await storage.readEntries()).toEqual([]);
-		await expect(
-			storage.appendEntry({
-				type: "leaf",
-				id: "leaf",
-				parentId: null,
-				timestamp: new Date().toISOString(),
-				targetId: rootEntry.id,
-			}),
-		).rejects.toMatchObject({ code: "not_found" });
-		expect(await storage.readEntries()).toEqual([]);
-		await storage.appendEntry(rootEntry);
-		expect(await storage.readEntries()).toEqual([rootEntry]);
-		await db.close();
+		const entryId = await session.appendMessage(createUserMessage("root"));
+		expect((await getSqliteEntries(session)).map((entry) => entry.id)).toEqual([entryId]);
 	});
 
 	it("materializes session summary fields transactionally", async () => {
@@ -542,8 +524,6 @@ END;
 		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const userId = await session.appendMessage(createUserMessage("one"));
-		await appendSqliteThinkingLevelChange(session, "high");
-		await appendSqliteModelChange(session, "anthropic", "claude-sonnet-4-5");
 		const assistant = {
 			...createAssistantMessage("two"),
 			provider: "anthropic",
@@ -557,25 +537,69 @@ END;
 				cost: { input: 0.1, output: 0.2, cacheRead: 0.03, cacheWrite: 0.04, total: 0.37 },
 			},
 		};
-		await session.appendMessage(assistant);
-		await appendSqliteCompaction(session, "summary", userId, 200, undefined, false, {
+		const assistantId = await session.appendMessage(assistant);
+		await session.appendRecord({
+			type: "usage",
+			id: "assistant-usage",
+			lane: "main",
+			cause: "assistant",
+			runId: "run",
+			entryId: assistantId,
+			attempt: 1,
+			stopReason: "stop",
+			usage: assistant.usage,
+		});
+		const compactionUsage = {
 			input: 1,
 			output: 2,
 			cacheRead: 3,
 			cacheWrite: 4,
 			totalTokens: 10,
 			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.04, total: 0.1 },
+		};
+		const compactionId = await appendSqliteCompaction(
+			session,
+			"summary",
+			userId,
+			200,
+			undefined,
+			false,
+			compactionUsage,
+		);
+		await session.appendRecord({
+			type: "usage",
+			id: "compaction-usage",
+			lane: "main",
+			cause: "compaction",
+			runId: "run",
+			entryId: compactionId,
+			attempt: 1,
+			stopReason: "stop",
+			usage: compactionUsage,
 		});
-		await moveSqliteMainLane(session, userId, {
+		const branchUsage = {
+			input: 5,
+			output: 6,
+			cacheRead: 7,
+			cacheWrite: 8,
+			totalTokens: 26,
+			cost: { input: 0.05, output: 0.06, cacheRead: 0.07, cacheWrite: 0.08, total: 0.26 },
+		};
+		const branchSummaryId = await moveSqliteMainLane(session, userId, {
 			summary: "branch summary",
-			usage: {
-				input: 5,
-				output: 6,
-				cacheRead: 7,
-				cacheWrite: 8,
-				totalTokens: 26,
-				cost: { input: 0.05, output: 0.06, cacheRead: 0.07, cacheWrite: 0.08, total: 0.26 },
-			},
+			usage: branchUsage,
+		});
+		if (!branchSummaryId) throw new Error("Expected branch summary");
+		await session.appendRecord({
+			type: "usage",
+			id: "branch-summary-usage",
+			lane: "main",
+			cause: "branch_summary",
+			runId: "run",
+			entryId: branchSummaryId,
+			attempt: 1,
+			stopReason: "stop",
+			usage: branchUsage,
 		});
 		await appendSqliteSessionName(session, "  My Session  ");
 		await appendSqliteLabel(session, userId, "checkpoint");
@@ -589,30 +613,21 @@ END;
 			expect(row).toBeDefined();
 			expect(row?.session_id).toBe("session-1");
 			expect(JSON.parse(row?.payload ?? "null")).toMatchObject({
-				name: "My Session",
 				messageCount: 2,
 				cachedTokens: 50,
 				uncachedTokens: 128,
 				totalTokens: 211,
 				costTotal: 0.73,
-				currentModel: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
-				currentThinkingLevel: "high",
 			});
-			const entryRows = await db
-				.prepare(
-					"SELECT session_id, seq, type, payload FROM entry_materialized WHERE session_id = ? ORDER BY seq, type",
-				)
-				.all<{
-					session_id: string;
-					seq: number;
-					type: string;
-					payload: string;
-				}>("session-1");
-			expect(
-				entryRows.some((entryRow) => entryRow.type === "label" && JSON.parse(entryRow.payload).targetId === userId),
-			).toBe(true);
-			expect(entryRows.some((entryRow) => entryRow.type === "thinking")).toBe(false);
-			expect(entryRows.some((entryRow) => entryRow.type === "model")).toBe(false);
+			const nameFact = await db
+				.prepare("SELECT value FROM facts WHERE session_id = ? AND kind = 'name' ORDER BY seq DESC LIMIT 1")
+				.get<{ value: string }>("session-1");
+			expect(JSON.parse(nameFact?.value ?? "null")).toBe("My Session");
+			const labelFact = await db
+				.prepare("SELECT key, value FROM facts WHERE session_id = ? AND kind = 'label' ORDER BY seq DESC LIMIT 1")
+				.get<{ key: string; value: string }>("session-1");
+			expect(labelFact?.key).toBe(userId);
+			expect(JSON.parse(labelFact?.value ?? "null")).toBe("checkpoint");
 		} finally {
 			await db.close();
 		}
