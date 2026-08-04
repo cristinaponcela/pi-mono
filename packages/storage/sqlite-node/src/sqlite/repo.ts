@@ -24,10 +24,14 @@ import {
 	appendEntryToBranchCache,
 	buildCachedBranch,
 	type CachedBranchEntryRow,
+	deleteBranchCache,
 	queryCachedBranchRows,
+	readBranchTipIds,
 	readCachedBranch,
 } from "./storage/branch-cache.ts";
 import {
+	countMessageEntries,
+	deleteEntryRows,
 	type EntryRow,
 	entryPayload,
 	idExistsInEntries,
@@ -35,19 +39,36 @@ import {
 	readEntryRow,
 	readEntryRows,
 } from "./storage/entries.ts";
-import { appendFact, readLatestFact } from "./storage/facts.ts";
+import { appendFact, deleteFactRows, readFactRows, readLatestFact, readLatestLabelFacts } from "./storage/facts.ts";
 import {
 	createInitialLane,
+	deleteLaneRows,
 	createLane as insertLane,
 	readLane,
 	readLaneHead,
+	readLaneMoveRows,
 	readLanes,
 	setLaneLeaf,
 	moveLane as updateLane,
 } from "./storage/lanes.ts";
-import { appendRecordRow, idExistsInRecords, readRecordRows } from "./storage/records.ts";
-import { advanceSequence, getNextSequence } from "./storage/session-sequences.ts";
-import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";
+import { deleteLease } from "./storage/leases.ts";
+import { appendRecordRow, deleteRecordRows, idExistsInRecords, readRecordRows } from "./storage/records.ts";
+import {
+	advanceSequence,
+	createSequence,
+	deleteSequence,
+	getNextSequence,
+	setNextSequence,
+} from "./storage/session-sequences.ts";
+import {
+	deleteSessionRow,
+	insertSessionRow,
+	readSessionRow,
+	readSessionRows,
+	rowToMetadata,
+	type SessionRow,
+	sessionExists,
+} from "./storage/sessions.ts";
 import type { SqliteDatabase, SqliteDatabaseFactory } from "./types.ts";
 
 export interface SqliteSessionMetadata extends SessionMetadata {
@@ -71,19 +92,6 @@ export interface SqliteSessionRepositoryOptions {
 	env: SqliteSessionRepositoryEnv;
 	sqlite: SqliteDatabaseFactory;
 	databasePath: string;
-}
-
-interface FactRow {
-	seq: number;
-	kind: string;
-	key: string | null;
-	value: string | null;
-}
-
-interface LaneMoveRow {
-	seq: number;
-	lane: string;
-	leaf_id: string | null;
 }
 
 class SerialOperationQueue {
@@ -293,9 +301,7 @@ async function assertUnusedId(db: SqliteDatabase, sessionId: string, id: string)
 }
 
 async function requireSessionRow(db: SqliteDatabase, sessionId: string): Promise<SessionRow> {
-	const row = await db
-		.prepare("SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions WHERE id = ?")
-		.get<SessionRow>(sessionId);
+	const row = await readSessionRow(db, sessionId);
 	if (!row) throw new SessionError("not_found", `Session not found: ${sessionId}`);
 	return row;
 }
@@ -441,12 +447,8 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 		const afterSeq = options.afterSeq ?? 0;
 		const entryRows = await readEntryRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst" });
 		const recordRows = await readRecordRows(this.db, this.metadata.id, { afterSeq });
-		const laneRows = await this.db
-			.prepare("SELECT seq, lane, leaf_id FROM lane_moves WHERE session_id = ? AND seq > ? ORDER BY seq")
-			.all<LaneMoveRow>(this.metadata.id, afterSeq);
-		const factRows = await this.db
-			.prepare("SELECT seq, kind, key, value FROM facts WHERE session_id = ? AND seq > ? ORDER BY seq")
-			.all<FactRow>(this.metadata.id, afterSeq);
+		const laneRows = await readLaneMoveRows(this.db, this.metadata.id, { afterSeq });
+		const factRows = await readFactRows(this.db, this.metadata.id, { afterSeq });
 
 		const log: LogItem[] = [
 			...entryRows.map((row) => ({ kind: "entry" as const, seq: row.seq, entry: decodeEntry(row) })),
@@ -512,10 +514,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 
 	async getStats(): Promise<SessionStats> {
 		const stats = emptyStats();
-		const messages = await this.db
-			.prepare("SELECT COUNT(*) AS count FROM entries WHERE session_id = ? AND type = 'message'")
-			.get<{ count: number }>(this.metadata.id);
-		stats.messageCount = messages?.count ?? 0;
+		stats.messageCount = await countMessageEntries(this.db, this.metadata.id);
 		for (const record of await this.findRecords({ type: "usage", order: "oldestFirst" })) {
 			if (record.type === "usage") addUsage(stats, record.usage);
 		}
@@ -552,23 +551,17 @@ export class SqliteSessionRepository
 			const db = await this.getDatabase();
 			const path = await this.getDatabasePath();
 			const id = options.id ?? uuidv7();
-			if (await db.prepare("SELECT 1 AS found FROM sessions WHERE id = ?").get<{ found: number }>(id)) {
-				throw new SessionError("already_exists", `Session already exists: ${id}`);
-			}
+			if (await sessionExists(db, id)) throw new SessionError("already_exists", `Session already exists: ${id}`);
 			const createdAt = Date.now();
 			await db.transaction(async () => {
-				await db
-					.prepare(
-						"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)",
-					)
-					.run(
-						id,
-						timestampToText(createdAt),
-						options.metadata === undefined ? null : JSON.stringify(options.metadata),
-						options.cwd,
-						options.parentSessionId ?? null,
-					);
-				await db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(id, 1);
+				await insertSessionRow(db, {
+					id,
+					createdAt: timestampToText(createdAt),
+					cwd: options.cwd,
+					parentSessionId: options.parentSessionId,
+					metadata: options.metadata,
+				});
+				await createSequence(db, id);
 				await createInitialLane(db, id);
 			});
 			return new Session(
@@ -593,17 +586,7 @@ export class SqliteSessionRepository
 			const path = await this.getDatabasePath();
 			if (!resultOrThrow(await this.options.env.exists(path), `Failed to check database ${path}`)) return [];
 			const db = await this.getDatabase();
-			const rows = options.cwd
-				? await db
-						.prepare(
-							"SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
-						)
-						.all<SessionRow>(options.cwd)
-				: await db
-						.prepare(
-							"SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions ORDER BY created_at DESC",
-						)
-						.all<SessionRow>();
+			const rows = await readSessionRows(db, options);
 			return rows.map((row) => metadataFromRow(row, path));
 		});
 	}
@@ -612,20 +595,14 @@ export class SqliteSessionRepository
 		return this.operations.enqueue(async () => {
 			const db = await this.getDatabase();
 			await db.transaction(async () => {
-				for (const table of [
-					"branch_tips",
-					"branch_entries",
-					"facts",
-					"lane_moves",
-					"records",
-					"entries",
-					"lanes",
-					"leases",
-					"session_sequences",
-				]) {
-					await db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(metadata.id);
-				}
-				await db.prepare("DELETE FROM sessions WHERE id = ?").run(metadata.id);
+				await deleteBranchCache(db, metadata.id);
+				await deleteFactRows(db, metadata.id);
+				await deleteLaneRows(db, metadata.id);
+				await deleteRecordRows(db, metadata.id);
+				await deleteEntryRows(db, metadata.id);
+				await deleteLease(db, metadata.id);
+				await deleteSequence(db, metadata.id);
+				await deleteSessionRow(db, metadata.id);
 			});
 		});
 	}
@@ -639,9 +616,7 @@ export class SqliteSessionRepository
 			const path = await this.getDatabasePath();
 			const sourceMetadata = metadataFromRow(await requireSessionRow(db, source.id), path);
 			const id = options.id ?? uuidv7();
-			if (await db.prepare("SELECT 1 AS found FROM sessions WHERE id = ?").get<{ found: number }>(id)) {
-				throw new SessionError("already_exists", `Session already exists: ${id}`);
-			}
+			if (await sessionExists(db, id)) throw new SessionError("already_exists", `Session already exists: ${id}`);
 
 			const entries: EntryRow[] = [];
 			const lanes: { lane: string; leafId: string | null }[] = [];
@@ -651,13 +626,7 @@ export class SqliteSessionRepository
 			if (options.scope === "tree") {
 				entries.push(...(await readEntryRows(db, source.id, { order: "oldestFirst" })));
 				lanes.push(...(await readLanes(db, source.id)).map((row) => ({ lane: row.lane, leafId: row.leaf_id })));
-				branchTips.push(
-					...(
-						await db
-							.prepare("SELECT tip_id FROM branch_tips WHERE session_id = ? ORDER BY tip_id")
-							.all<{ tip_id: string }>(source.id)
-					).map((row) => row.tip_id),
-				);
+				branchTips.push(...(await readBranchTipIds(db, source.id)));
 			} else {
 				const main = await readLane(db, source.id, "main");
 				if (!main) throw new SessionError("invalid_lane", "Lane not found: main");
@@ -690,17 +659,7 @@ export class SqliteSessionRepository
 
 			const copiedIds = new Set(entries.map((entry) => entry.id));
 			const latestName = await readLatestFact(db, source.id, "name", null);
-			const latestLabels = await db
-				.prepare(
-					`SELECT key, value FROM (
-						SELECT key, value, ROW_NUMBER() OVER (PARTITION BY key ORDER BY seq DESC) AS rank
-						FROM facts
-						WHERE session_id = ? AND kind = 'label'
-					)
-					WHERE rank = 1 AND value IS NOT NULL
-					ORDER BY key`,
-				)
-				.all<{ key: string; value: string }>(source.id);
+			const latestLabels = await readLatestLabelFacts(db, source.id);
 			const labelsToCopy = latestLabels.filter(
 				(row) => options.scope === "tree" || (row.key !== null && copiedIds.has(row.key)),
 			);
@@ -709,18 +668,14 @@ export class SqliteSessionRepository
 
 			try {
 				await db.transaction(async () => {
-					await db
-						.prepare(
-							"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)",
-						)
-						.run(
-							id,
-							timestampToText(createdAt),
-							metadata === undefined ? null : JSON.stringify(metadata),
-							options.cwd,
-							options.parentSessionId ?? source.id,
-						);
-					await db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(id, 1);
+					await insertSessionRow(db, {
+						id,
+						createdAt: timestampToText(createdAt),
+						cwd: options.cwd,
+						parentSessionId: options.parentSessionId ?? source.id,
+						metadata,
+					});
+					await createSequence(db, id);
 
 					let nextSeq = 1;
 					const allocateSeq = () => nextSeq++;
@@ -747,7 +702,7 @@ export class SqliteSessionRepository
 					for (const label of labelsToCopy)
 						await appendFact(db, id, allocateSeq(), "label", label.key, label.value);
 
-					await db.prepare("UPDATE session_sequences SET next_seq = ? WHERE session_id = ?").run(nextSeq, id);
+					await setNextSequence(db, id, nextSeq);
 					for (const tip of branchTips) await buildCachedBranch(db, id, tip);
 				});
 			} catch (error) {

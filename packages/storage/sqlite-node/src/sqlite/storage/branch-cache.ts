@@ -83,6 +83,19 @@ export async function queryCachedBranchRows(
 	return db.prepare(sql).all<CachedBranchEntryRow>(...params);
 }
 
+export async function readBranchTipIds(db: SqliteDatabase, sessionId: string): Promise<string[]> {
+	return (
+		await db
+			.prepare("SELECT tip_id FROM branch_tips WHERE session_id = ? ORDER BY tip_id")
+			.all<{ tip_id: string }>(sessionId)
+	).map((row) => row.tip_id);
+}
+
+export async function deleteBranchCache(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM branch_tips WHERE session_id = ?").run(sessionId);
+	await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(sessionId);
+}
+
 export async function buildCachedBranch(db: SqliteDatabase, sessionId: string, leafId: string): Promise<void> {
 	await db.exec("SAVEPOINT build_branch_cache");
 	try {

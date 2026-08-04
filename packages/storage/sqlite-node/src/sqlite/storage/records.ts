@@ -49,6 +49,10 @@ export async function idExistsInRecords(db: SqliteDatabase, sessionId: string, i
 		.get<{ found: number }>(sessionId, id));
 }
 
+export async function deleteRecordRows(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM records WHERE session_id = ?").run(sessionId);
+}
+
 export async function readRecordRows(
 	db: SqliteDatabase,
 	sessionId: string,

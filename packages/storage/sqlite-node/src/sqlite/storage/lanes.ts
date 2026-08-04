@@ -93,6 +93,32 @@ export async function setLaneLeaf(
 	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 }
 
+export async function readLaneMoveRows(
+	db: SqliteDatabase,
+	sessionId: string,
+	options: { afterSeq?: number } = {},
+): Promise<LaneMoveRow[]> {
+	const predicates = ["session_id = ?"];
+	const params: unknown[] = [sessionId];
+	if (options.afterSeq !== undefined) {
+		predicates.push("seq > ?");
+		params.push(options.afterSeq);
+	}
+	return db
+		.prepare(
+			`SELECT session_id, seq, lane, leaf_id
+			FROM lane_moves
+			WHERE ${predicates.join(" AND ")}
+			ORDER BY seq`,
+		)
+		.all<LaneMoveRow>(...params);
+}
+
+export async function deleteLaneRows(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM lane_moves WHERE session_id = ?").run(sessionId);
+	await db.prepare("DELETE FROM lanes WHERE session_id = ?").run(sessionId);
+}
+
 async function appendLaneMove(
 	db: SqliteDatabase,
 	sessionId: string,

@@ -70,8 +70,19 @@ export async function readEntryRows(
 		.all<EntryRow>(...params);
 }
 
+export async function countMessageEntries(db: SqliteDatabase, sessionId: string): Promise<number> {
+	const row = await db
+		.prepare("SELECT COUNT(*) AS count FROM entries WHERE session_id = ? AND type = 'message'")
+		.get<{ count: number }>(sessionId);
+	return row?.count ?? 0;
+}
+
 export async function idExistsInEntries(db: SqliteDatabase, sessionId: string, id: string): Promise<boolean> {
 	return !!(await db
 		.prepare("SELECT 1 AS found FROM entries WHERE session_id = ? AND id = ? LIMIT 1")
 		.get<{ found: number }>(sessionId, id));
+}
+
+export async function deleteEntryRows(db: SqliteDatabase, sessionId: string): Promise<void> {
+	await db.prepare("DELETE FROM entries WHERE session_id = ?").run(sessionId);
 }
