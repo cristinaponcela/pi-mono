@@ -9,6 +9,16 @@ export interface CachedBranch {
 	leafSeq: number;
 }
 
+export interface CachedBranchEntryRow {
+	session_id: string;
+	id: string;
+	entry_seq: number;
+	parent_id: string | null;
+	type: SessionEntryRow["type"];
+	timestamp: string;
+	payload: string;
+}
+
 export interface CachedBranchQuery {
 	stopAtType?: SessionEntryRow["type"];
 	stopAtId?: string;
@@ -106,7 +116,7 @@ export async function readCachedBranchRows(
 	sessionId: string,
 	branch: CachedBranch,
 	startSeq: number,
-): Promise<SessionEntryRow[]> {
+): Promise<CachedBranchEntryRow[]> {
 	return db
 		.prepare(
 			`SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
@@ -115,7 +125,7 @@ export async function readCachedBranchRows(
 			WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq BETWEEN ? AND ?
 			ORDER BY b.entry_seq`,
 		)
-		.all<SessionEntryRow>(sessionId, branch.branchId, startSeq, branch.leafSeq);
+		.all<CachedBranchEntryRow>(sessionId, branch.branchId, startSeq, branch.leafSeq);
 }
 
 export async function queryCachedBranchRows(
@@ -123,7 +133,7 @@ export async function queryCachedBranchRows(
 	sessionId: string,
 	branch: CachedBranch,
 	query: CachedBranchQuery,
-): Promise<SessionEntryRow[]> {
+): Promise<CachedBranchEntryRow[]> {
 	const oldestFirst = query.order === "oldestFirst";
 	const boundaryParams: unknown[] = [sessionId, branch.branchId, branch.leafSeq];
 	const stopPredicates: string[] = [];
@@ -160,7 +170,7 @@ export async function queryCachedBranchRows(
 		ORDER BY b.entry_seq ${oldestFirst ? "ASC" : "DESC"}`;
 
 	const params = [...(stopPredicates.length === 0 ? [] : boundaryParams), sessionId, branch.branchId, branch.leafSeq];
-	return db.prepare(sql).all<SessionEntryRow>(...params);
+	return db.prepare(sql).all<CachedBranchEntryRow>(...params);
 }
 
 export async function readCachedEntryRowsByType(
@@ -168,7 +178,7 @@ export async function readCachedEntryRowsByType(
 	sessionId: string,
 	branch: CachedBranch,
 	type: SessionEntryRow["type"],
-): Promise<SessionEntryRow[]> {
+): Promise<CachedBranchEntryRow[]> {
 	// Drive the join from the usually sparse entry type. Ordering from branch_entries
 	// makes SQLite scan the complete cached path before filtering by type.
 	return db
@@ -181,7 +191,7 @@ export async function readCachedEntryRowsByType(
 				AND b.branch_id = ? AND b.entry_seq <= ?
 			ORDER BY e.seq DESC`,
 		)
-		.all<SessionEntryRow>(sessionId, type, branch.branchId, branch.leafSeq);
+		.all<CachedBranchEntryRow>(sessionId, type, branch.branchId, branch.leafSeq);
 }
 
 export async function readCachedEntrySeq(

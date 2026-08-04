@@ -62,18 +62,16 @@ export async function appendSqliteCompaction(
 	usage?: Usage,
 	retainedTail: SqliteTestMessage[] = [],
 ): Promise<string> {
-	const entry = await session.appendEntry(
-		{
-			type: "compaction",
-			id: session.idGenerator.next(),
-			summary,
-			retainedTail,
-			tokensBefore,
-			details,
-			usage,
-		} satisfies Omit<CompactionEntry, "parentId" | "seq" | "timestamp">,
-		"main",
-	);
+	const provisioned = {
+		type: "compaction",
+		id: session.idGenerator.next(),
+		summary,
+		retainedTail,
+		tokensBefore,
+		...(details === undefined ? {} : { details }),
+		...(usage === undefined ? {} : { usage }),
+	} satisfies Omit<CompactionEntry, "parentId" | "seq" | "timestamp">;
+	const entry = await session.appendEntry(provisioned, "main");
 	return entry.id;
 }
 
@@ -84,17 +82,15 @@ export async function moveSqliteMainLane(
 ): Promise<string | undefined> {
 	await session.moveLane("main", entryId);
 	if (!summary) return undefined;
-	const entry = await session.appendEntry(
-		{
-			type: "branch_summary",
-			id: session.idGenerator.next(),
-			fromId: entryId ?? "root",
-			summary: summary.summary,
-			details: summary.details,
-			usage: summary.usage,
-		} satisfies Omit<BranchSummaryEntry, "parentId" | "seq" | "timestamp">,
-		"main",
-	);
+	const provisioned = {
+		type: "branch_summary",
+		id: session.idGenerator.next(),
+		fromId: entryId ?? "root",
+		summary: summary.summary,
+		...(summary.details === undefined ? {} : { details: summary.details }),
+		...(summary.usage === undefined ? {} : { usage: summary.usage }),
+	} satisfies Omit<BranchSummaryEntry, "parentId" | "seq" | "timestamp">;
+	const entry = await session.appendEntry(provisioned, "main");
 	return entry.id;
 }
 

@@ -1,4 +1,4 @@
-import { SessionError } from "@earendil-works/pi-agent-core";
+import { SessionError } from "@earendil-works/pi-agent-core/experimental";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface LaneRow {
@@ -51,8 +51,8 @@ export async function readLaneHead(
 			WHERE l.session_id = ? AND l.lane = ?`,
 		)
 		.get<{ leaf_id: string | null; leaf_exists: number }>(sessionId, lane);
-	if (!row) throw new SessionError("not_found", `Lane ${lane} not found in session ${sessionId}`);
-	if (row.leaf_exists === 0) throw new SessionError("invalid_session", `Entry ${row.leaf_id} not found`);
+	if (!row) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
+	if (row.leaf_exists === 0) throw new SessionError("storage", `Entry ${row.leaf_id} not found`);
 	return { leafId: row.leaf_id };
 }
 
@@ -77,7 +77,7 @@ export async function moveLane(
 	const result = await db
 		.prepare("UPDATE lanes SET leaf_id = ? WHERE session_id = ? AND lane = ?")
 		.run(leafId, sessionId, lane);
-	if (result.changes !== 1) throw new SessionError("not_found", `Lane ${lane} not found in session ${sessionId}`);
+	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 	await appendLaneMove(db, sessionId, seq, lane, leafId);
 }
 
@@ -90,7 +90,7 @@ export async function setLaneLeaf(
 	const result = await db
 		.prepare("UPDATE lanes SET leaf_id = ? WHERE session_id = ? AND lane = ?")
 		.run(leafId, sessionId, lane);
-	if (result.changes !== 1) throw new SessionError("not_found", `Lane ${lane} not found in session ${sessionId}`);
+	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 }
 
 export async function appendLaneMove(
