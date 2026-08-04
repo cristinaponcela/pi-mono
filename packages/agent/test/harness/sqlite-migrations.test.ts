@@ -3,9 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-	applyMigrations,
 	createNodeSqliteFactory,
-	loadMigrations,
 	type SqliteDatabase,
 	type SqliteDatabaseFactory,
 	type SqliteRunResult,
@@ -110,7 +108,7 @@ describe("SQLite migrations", () => {
 		const db = await sqlite.open(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_lanes.sql"]);
+			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql"]);
 			const tables = await db
 				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string; sql: string | null }>();
@@ -147,41 +145,6 @@ describe("SQLite migrations", () => {
 				const table = tables.find((row) => row.name === tableName);
 				expect(table?.sql).toContain("WITHOUT ROWID");
 			}
-		} finally {
-			await db.close();
-		}
-	});
-
-	it("adds lane tables without rewriting the branch cache", async () => {
-		const root = createTempDir();
-		const databasePath = join(root, "sessions.sqlite");
-		const sqlite = createNodeSqliteFactory();
-		const db = await sqlite.open(databasePath);
-		try {
-			const initial = (await loadMigrations()).find((migration) => migration.id === "001_initial.sql");
-			if (!initial) throw new Error("Missing initial SQLite migration");
-			await db.exec(initial.sql);
-			await db.exec("CREATE TABLE migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
-			await db
-				.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
-				.run(initial.id, "2026-01-01T00:00:00.000Z");
-			await db
-				.prepare(
-					"INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type) VALUES (?, ?, ?, ?, ?, ?)",
-				)
-				.run("session-1", "legacy-branch", "entry-1", 1, "message", null);
-
-			await applyMigrations(db);
-
-			expect(await db.prepare("SELECT entry_id FROM branch_entries").all<{ entry_id: string }>()).toEqual([
-				{ entry_id: "entry-1" },
-			]);
-			expect(
-				await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'branch_tips'").get(),
-			).toBeDefined();
-			expect(
-				(await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>()).map((row) => row.id),
-			).toEqual(["001_initial.sql", "002_lanes.sql"]);
 		} finally {
 			await db.close();
 		}
