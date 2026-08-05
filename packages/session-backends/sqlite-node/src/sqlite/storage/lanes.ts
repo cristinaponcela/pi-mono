@@ -5,6 +5,7 @@ export interface LaneRow {
 	session_id: string;
 	lane: string;
 	leaf_id: string | null;
+	open_operation_id: string | null;
 }
 
 export interface LaneMoveRow {
@@ -15,7 +16,11 @@ export interface LaneMoveRow {
 }
 
 export function createInitialLane(db: SqliteDatabase, sessionId: string, lane = "main", leafId: string | null = null) {
-	db.prepare("INSERT INTO lanes (session_id, lane, leaf_id) VALUES (?, ?, ?)").run(sessionId, lane, leafId);
+	db.prepare("INSERT INTO lanes (session_id, lane, leaf_id, open_operation_id) VALUES (?, ?, ?, NULL)").run(
+		sessionId,
+		lane,
+		leafId,
+	);
 }
 
 export function readLanes(db: SqliteDatabase, sessionId: string) {
@@ -25,6 +30,7 @@ export function readLanes(db: SqliteDatabase, sessionId: string) {
 				l.session_id,
 				l.lane,
 				l.leaf_id,
+				l.open_operation_id,
 				(l.leaf_id IS NULL OR EXISTS (
 					SELECT 1 FROM entries AS e WHERE e.session_id = l.session_id AND e.id = l.leaf_id
 				)) AS leaf_exists
@@ -38,12 +44,17 @@ export function readLanes(db: SqliteDatabase, sessionId: string) {
 			throw new SessionError("storage", `Lane ${row.lane} points at missing entry ${row.leaf_id}`);
 		}
 	}
-	return rows.map(({ session_id, lane, leaf_id }) => ({ session_id, lane, leaf_id }));
+	return rows.map(({ session_id, lane, leaf_id, open_operation_id }) => ({
+		session_id,
+		lane,
+		leaf_id,
+		open_operation_id,
+	}));
 }
 
 export function readLane(db: SqliteDatabase, sessionId: string, lane: string) {
 	return db
-		.prepare("SELECT session_id, lane, leaf_id FROM lanes WHERE session_id = ? AND lane = ?")
+		.prepare("SELECT session_id, lane, leaf_id, open_operation_id FROM lanes WHERE session_id = ? AND lane = ?")
 		.get<LaneRow>(sessionId, lane);
 }
 
@@ -65,7 +76,11 @@ export function readLaneHead(db: SqliteDatabase, sessionId: string, lane: string
 }
 
 export function createLane(db: SqliteDatabase, sessionId: string, seq: number, lane: string, leafId: string | null) {
-	db.prepare("INSERT INTO lanes (session_id, lane, leaf_id) VALUES (?, ?, ?)").run(sessionId, lane, leafId);
+	db.prepare("INSERT INTO lanes (session_id, lane, leaf_id, open_operation_id) VALUES (?, ?, ?, NULL)").run(
+		sessionId,
+		lane,
+		leafId,
+	);
 	appendLaneMove(db, sessionId, seq, lane, leafId);
 }
 
@@ -82,6 +97,22 @@ export function setLaneLeaf(db: SqliteDatabase, sessionId: string, lane: string,
 		.prepare("UPDATE lanes SET leaf_id = ? WHERE session_id = ? AND lane = ?")
 		.run(leafId, sessionId, lane);
 	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
+}
+
+export function startLaneOperation(db: SqliteDatabase, sessionId: string, lane: string, runId: string) {
+	const result = db
+		.prepare("UPDATE lanes SET open_operation_id = ? WHERE session_id = ? AND lane = ? AND open_operation_id IS NULL")
+		.run(runId, sessionId, lane);
+	if (result.changes === 1) return;
+	const current = readLane(db, sessionId, lane);
+	if (!current) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
+	throw new SessionError("storage", `Lane ${lane} already has an open operation ${current.open_operation_id}`);
+}
+
+export function finishLaneOperation(db: SqliteDatabase, sessionId: string, lane: string, runId: string) {
+	db.prepare(
+		"UPDATE lanes SET open_operation_id = NULL WHERE session_id = ? AND lane = ? AND open_operation_id = ?",
+	).run(sessionId, lane, runId);
 }
 
 export function readLaneMoveRows(db: SqliteDatabase, sessionId: string, options: { afterSeq?: number } = {}) {

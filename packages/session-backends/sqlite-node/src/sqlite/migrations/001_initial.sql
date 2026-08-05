@@ -61,10 +61,12 @@ CREATE TABLE IF NOT EXISTS lanes (
 	session_id TEXT NOT NULL,
 	lane TEXT NOT NULL,
 	leaf_id TEXT NULL,
+	open_operation_id TEXT NULL,
 	PRIMARY KEY (session_id, lane)
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_lanes_session_leaf ON lanes(session_id, leaf_id);
+CREATE INDEX IF NOT EXISTS idx_lanes_session_open_operation ON lanes(session_id, open_operation_id);
 
 CREATE TABLE IF NOT EXISTS records (
 	session_id TEXT NOT NULL,
@@ -83,7 +85,6 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE INDEX IF NOT EXISTS idx_records_session_seq ON records(session_id, seq);
 CREATE INDEX IF NOT EXISTS idx_records_session_lane_type_seq ON records(session_id, lane, type, seq);
 CREATE INDEX IF NOT EXISTS idx_records_session_lane_type_op_kind_seq ON records(session_id, lane, type, op_kind, seq);
-CREATE INDEX IF NOT EXISTS idx_records_session_lane_run_id_type ON records(session_id, lane, run_id, type);
 CREATE INDEX IF NOT EXISTS idx_records_session_run_id_seq ON records(session_id, run_id, seq);
 
 CREATE TABLE IF NOT EXISTS lane_moves (

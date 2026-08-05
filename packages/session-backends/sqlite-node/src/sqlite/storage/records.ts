@@ -103,29 +103,18 @@ export function readOpenOperationRows(
 	db: SqliteDatabase,
 	sessionId: string,
 	lane: string,
-	options: { limit?: number } = {},
+	_options: { limit?: number } = {},
 ): RecordRow[] {
-	const params: unknown[] = [sessionId, lane];
-	const limit = options.limit === undefined ? "" : " LIMIT ?";
-	if (options.limit !== undefined) params.push(options.limit);
 	return db
 		.prepare(
-			`SELECT started.session_id, started.seq, started.id, started.lane, started.run_id,
-				started.type, started.op_kind, started.timestamp, started.payload
-			FROM records AS started
-			WHERE started.session_id = ?
-				AND started.lane = ?
-				AND started.type = 'operation_started'
-				AND NOT EXISTS (
-					SELECT 1
-					FROM records AS finished
-					WHERE finished.session_id = started.session_id
-						AND finished.lane = started.lane
-						AND finished.run_id = started.id
-						AND finished.type = 'operation_finished'
-						AND finished.seq > started.seq
-				)
-			ORDER BY started.seq DESC${limit}`,
+			`SELECT records.session_id, records.seq, records.id, records.lane, records.run_id,
+				records.type, records.op_kind, records.timestamp, records.payload
+			FROM lanes
+			JOIN records ON records.session_id = lanes.session_id
+				AND records.id = lanes.open_operation_id
+			WHERE lanes.session_id = ?
+				AND lanes.lane = ?
+				AND records.type = 'operation_started'`,
 		)
-		.all<RecordRow>(...params);
+		.all<RecordRow>(sessionId, lane);
 }

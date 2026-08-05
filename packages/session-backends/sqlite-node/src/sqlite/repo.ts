@@ -35,12 +35,14 @@ import { appendFact, deleteFactRows, readFactRows, readLatestFact, readLatestLab
 import {
 	createInitialLane,
 	deleteLaneRows,
+	finishLaneOperation,
 	createLane as insertLane,
 	readLane,
 	readLaneHead,
 	readLaneMoveRows,
 	readLanes,
 	setLaneLeaf,
+	startLaneOperation,
 	moveLane as updateLane,
 } from "./storage/lanes.ts";
 import {
@@ -496,6 +498,9 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 			assertUnusedId(this.db, this.metadata.id, record.id);
 			const seq = getNextSequence(this.db, this.metadata.id);
 			const committed: LaneRecord = { ...record, seq, timestamp: Date.now() };
+			if (record.type === "operation_started") {
+				startLaneOperation(this.db, this.metadata.id, record.lane, record.id);
+			}
 			appendRecordRow(this.db, this.metadata.id, {
 				seq,
 				id: record.id,
@@ -506,6 +511,9 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 				timestamp: timestampToText(committed.timestamp),
 				payload: JSON.stringify(record),
 			});
+			if (record.type === "operation_finished") {
+				finishLaneOperation(this.db, this.metadata.id, record.lane, record.runId);
+			}
 			if (record.type === "usage") addUsageToStats(this.db, this.metadata.id, record.usage);
 			advanceSequence(this.db, this.metadata.id, seq);
 			return structuredClone(committed);
@@ -546,6 +554,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 
 	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
 		const rows = readOpenOperationRows(this.db, this.metadata.id, lane, options);
+
 		return rows.map((row) => {
 			const record = decodeRecord(row);
 			if (record.type !== "operation_started") {
