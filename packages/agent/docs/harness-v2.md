@@ -1652,6 +1652,8 @@ interface JsonlSessionListOptions { cwd?: string; }
 
 A v3 `parentSession` path resolves to the parent header's id when that file is available. If it is unavailable, metadata retains `legacyParentSessionPath`; first-write conversion preserves that optional header field rather than silently dropping the relationship. Format-4 code uses `parentSessionId` for repository relationships. `modifiedAt` is read from the filesystem and is not a sequenced session mutation.
 
+The repository layout matches coding-agent v3. Under `sessionsRoot`, each resolved cwd uses a directory named `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`. New files are named `${createdAtIso.replace(/[:.]/g, "-")}_${sessionId}.jsonl`. `list({ cwd })` scans that cwd's directory; `list()` scans every direct child directory. First-write v3 conversion replaces the original file in place and never changes its directory or filename.
+
 One file per session: a header line, then one JSON object per line, in `seq` order. Every logical mutation is exactly one line; a line is the atomic unit.
 
 ```text
@@ -2049,9 +2051,21 @@ Semantics that make tests deterministic:
 ### Live lane state
 
 ```ts
-/** In-memory state per lane. Always equal to the reduction of the lane's
-    records and own entries (section 7): live commits update it; restore
-    recomputes it. */
+interface EffectiveLaneConfiguration {
+  model: { provider: string; modelId: string };
+  thinkingLevel: ThinkingLevel;
+  activeToolNames: string[];
+}
+
+interface TerminalFailureState {
+  entryId: string;
+  source: "step" | "deferred_fetch";
+  message: AssistantMessage;
+}
+
+/** In-memory orchestration state per lane. Always equal to the laneState
+    produced by reducing the lane's records and own entries (section 7): live
+    commits update it; restore recomputes it. */
 interface LaneState {
   lane: string;
   leafId: string | null;
@@ -2093,6 +2107,27 @@ interface ToolBatchState {
   truncated: boolean;                       // assistant stopReason was "length"
   unresolved: boolean;
 }
+
+interface LaneReductionInput extends RecordLogSlice {
+  leafId: string | null;
+  /** Entries appended by the open operation, oldest first. Empty when idle. */
+  ownEntries: readonly Entry[];
+  /** Bounded effective-state lookups at the operation anchor or idle leaf,
+      oldest first. */
+  configurationEntries: readonly Entry[];
+  /** Harness option fallbacks used when no persisted value exists. */
+  defaults: EffectiveLaneConfiguration;
+}
+
+interface LaneReductionResult {
+  laneState: LaneState;
+  effectiveConfiguration: EffectiveLaneConfiguration;
+  /** Non-null only when newestOwn is an error produced by a step or deferred fetch,
+      never for an arbitrary error-shaped deferred write. */
+  terminalFailure: TerminalFailureState | null;
+}
+
+function reduceLaneState(input: LaneReductionInput): LaneReductionResult;
 ```
 
 Four control-flow signals travel by exception inside a procedure; none escapes to a caller. `RunFailed` carries a terminal failure into the drain-and-finish path. `Park` unwinds when a deferred handle was persisted; the lane suspends. `Aborted` unwinds to the abort path. `Overflow` routes a discarded recoverable response (section 6) into the compact-and-retry path. Any other rejection faults the harness.
@@ -2171,7 +2206,7 @@ async function handleRunSignal(e: unknown): Promise<RunResult> {
 ```
 
 
-**Fixed-point self-check.** When `resume()` completes, parks, or closes its operation, the harness recomputes the section 7 reduction from storage and compares it to the live `LaneState`. A mismatch is corruption and faults the harness — writer/reducer drift is caught the moment it happens instead of one crash later. The check is cheap (the same two bounded reads restore performs) and runs in production, not only under test.
+**Fixed-point self-check.** When `resume()` completes, parks, or closes its operation, the harness recomputes the section 7 reduction from storage and compares its `laneState` to the live `LaneState`. A mismatch is corruption and faults the harness — writer/reducer drift is caught the moment it happens instead of one crash later. The check is cheap (the same two bounded reads restore performs) and runs in production, not only under test.
 
 ### The loop
 
@@ -2859,7 +2894,7 @@ Crash simulation is `close()` at a chosen boundary, then reopening the same back
 
 Gate invariants, asserted across Tier C:
 
-- After every `resume()` outcome, the recomputed reduction equals live `LaneState` (the section 15 fixed-point self-check fired and passed).
+- After every `resume()` outcome, the recomputed reduction's `laneState` equals live `LaneState` (the section 15 fixed-point self-check fired and passed).
 - `peekAction()` has no side effect and is stable until `executeAction()`.
 - `executeAction()` releases exactly the peeked action, never a later one.
 - Stopping before an action leaves exactly the preceding durable prefix.
@@ -2923,7 +2958,7 @@ For one serial worker, the recommended next package is **R0**, because it unbloc
 
 ### Track F — scaffold truth and public ownership
 
-- [ ] **F0 — harden the scaffold.** Dependencies: none.
+- [x] **F0 — harden the scaffold.** Dependencies: none.
   - Primary files: `packages/agent/src/harness/agent-harness.ts`, `packages/agent/test/harness/agent-harness-scaffold.test.ts`.
   - Inventory every public method. Preserve only behavior that is genuinely correct without an operation runtime, such as immutable harness-global configuration copies and direct leaf reads. Make every other placeholder reject with `HarnessNotImplemented` instead of returning empty snapshots, idle state, or no-op drive/wait success.
   - Before R3, `AgentHarness.create()` may open only a record-free session. It rejects any session containing records rather than reporting a false empty suspended list.
@@ -2975,9 +3010,9 @@ These packages merge QA1 → QA2 → QA3. QA packages own the audit document and
 
 These packages merge R0 → R1 → R2 → R3. R1 and R2 add a reducer module instead of growing `agent-harness.ts`. R3 is the first package in this track that owns `agent-harness.ts` and therefore runs after F0.
 
-**In progress and reserved: R0 by @vegarsti.** Other agents must not pick R0 while this ownership marker remains.
+**In progress and reserved: R2 by @vegarsti.** Other agents must not pick R2 while this ownership marker remains.
 
-- [ ] **R0 — recovery-query contract.** Dependencies: none.
+- [x] **R0 — recovery-query contract.** Dependencies: none.
   - Primary files: `packages/agent/src/harness/session/types.ts`, `session.ts`, `memory.ts`, SQLite record storage/repository files, backend conformance, and focused recovery-query tests.
   - Add `RecordQuery.operationKind` and `findOpenOperations(lane, { limit })` exactly as specified in sections 7, 12, and 13. Memory maintains the projection, JSONL will derive it during replay, and SQLite answers it from the lane open-operation projection.
   - Prove that zero/one open operations are distinguishable, that normal writes cannot start a second operation on a busy lane, and that the latest run-kind start is an indexed query. Add the lane open-operation projection.
@@ -2988,13 +3023,11 @@ These packages merge R0 → R1 → R2 → R3. R1 and R2 add a reducer module ins
   - Validate the section 5 corruption rules from discovered open starts, bounded records, and point-looked-up entries, with no writes or effects.
   - Acceptance: one focused rejection test per validity bullet, plus valid prefixes at every section 6 crash point.
 
-**In progress and reserved: R2 by @vegarsti.** Other agents must not pick R2 while this ownership marker remains.
-
 - [ ] **R2 — pure lane-state reduction.** Dependencies: R1.
   - Primary files: `packages/agent/src/harness/reducer.ts`, `packages/agent/test/harness/reducer.test.ts`.
-  - Derive `LaneState`, pending queues/writes, attempts, tool batches, deferred handles, structural targets, terminal-failure state, idle next-run state, and effective configuration from the section 7 query inputs.
-  - Reduction exclusively owns state derivation; later recovery packages consume this state and do not re-reduce tool or operation records.
-  - Acceptance: table-driven tests cover idle and every suspended state; reduction is deterministic and performs no writes.
+  - Implement the section 15 `LaneReductionInput` → `LaneReductionResult` contract. Derive pending queues/writes, attempts, tool batches, deferred handles, structural targets, and idle next-run state into `laneState`; derive effective configuration and terminal-failure provenance beside it from the same section 7 query inputs.
+  - Keep `LaneState` limited to orchestration state. Reduction exclusively owns all three outputs; later recovery packages consume `LaneReductionResult` and do not re-reduce tool or operation records.
+  - Acceptance: table-driven tests cover idle and every suspended state, configuration fallback/override, and terminal-failure provenance; reduction is deterministic and performs no writes.
 - [ ] **R3 — harness restore inventory.** Dependencies: F0, R2.
   - Primary files: `packages/agent/src/harness/agent-harness.ts`, reducer integration helpers, and restore tests.
   - Wire `AgentHarness.create()` to use indexed open-operation discovery, bounded idle/open scans, explicit provisioned-id point lookups, and bounded configuration lookups. Return accurate `SuspendedOperation[]` without starting effects.
@@ -3032,6 +3065,8 @@ These packages own `packages/agent/src/harness/session/jsonl/**`, the concrete `
 
 I0, I1, and I2 may proceed independently. I3 → I4 → I5 is serial and begins after R2 fixes the `LaneState` shape. These packages use separate modules with focused unit tests; I5 remains primitive-only and does not edit `agent-harness.ts`.
 
+**In progress and reserved: I0 by @badlogic.** Other agents must not pick I0 while this ownership marker remains.
+
 - [ ] **I0 — telemetry contracts and no-op context.** Dependencies: none.
   - Primary files: `packages/agent/src/harness/telemetry.ts` and focused telemetry tests. Do not edit `agent-harness.ts`; H0 replaces its temporary local type declarations after convergence.
   - Define the canonical `ExecutionContext`, spans, attributes, and no-op implementation required by section 14 compatibility wrappers.
@@ -3060,6 +3095,8 @@ I0, I1, and I2 may proceed independently. I3 → I4 → I5 is serial and begins 
 ### Track L — agent-loop building blocks
 
 These packages all own `packages/agent/src/agent-loop.ts` and therefore merge strictly L1 → L2 → L3. Existing `agent-loop` and `agent` tests pass unchanged after each package.
+
+**In progress and reserved: L1–L3 by @badlogic.** Other agents must not pick an L package while this ownership marker remains.
 
 - [ ] **L1 — extract assistant streaming.** Dependencies: I0.
   - Add `streamAssistant()` and `StreamAssistantConfig`, including explicit telemetry context; route the compatibility loop's request path through it without changing events or results.
