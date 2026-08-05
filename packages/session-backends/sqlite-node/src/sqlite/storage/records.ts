@@ -1,3 +1,4 @@
+import { SessionError } from "@earendil-works/pi-agent-core";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface RecordRow {
@@ -105,16 +106,24 @@ export function readOpenOperationRows(
 	lane: string,
 	_options: { limit?: number } = {},
 ): RecordRow[] {
-	return db
+	const laneRow = db
+		.prepare("SELECT open_operation_id FROM lanes WHERE session_id = ? AND lane = ?")
+		.get<{ open_operation_id: string | null }>(sessionId, lane);
+	if (!laneRow?.open_operation_id) return [];
+
+	const record = db
 		.prepare(
-			`SELECT records.session_id, records.seq, records.id, records.lane, records.run_id,
-				records.type, records.op_kind, records.timestamp, records.payload
-			FROM lanes
-			JOIN records ON records.session_id = lanes.session_id
-				AND records.id = lanes.open_operation_id
-			WHERE lanes.session_id = ?
-				AND lanes.lane = ?
-				AND records.type = 'operation_started'`,
+			`SELECT session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload
+			FROM records
+			WHERE session_id = ?
+				AND id = ?`,
 		)
-		.all<RecordRow>(sessionId, lane);
+		.get<RecordRow>(sessionId, laneRow.open_operation_id);
+	if (!record) {
+		throw new SessionError("storage", `Lane ${lane} points at missing open operation ${laneRow.open_operation_id}`);
+	}
+	if (record.lane !== lane || record.type !== "operation_started") {
+		throw new SessionError("storage", `Lane ${lane} points at invalid open operation ${laneRow.open_operation_id}`);
+	}
+	return [record];
 }
