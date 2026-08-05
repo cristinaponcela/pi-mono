@@ -25,7 +25,9 @@ export function formatVersionCheckError(error: unknown): string {
 		.filter((code): code is string => code !== undefined);
 
 	if (codes.length > 0) return `${rootMessage} (${[...new Set(codes)].join(", ")})`;
-	const causeMessage = causes.find((value): value is Error => value instanceof Error && value.message)?.message;
+	const causeMessage = causes.find(
+		(value): value is Error => value instanceof Error && Boolean(value.message),
+	)?.message;
 	return causeMessage ? `${rootMessage} (cause: ${causeMessage})` : rootMessage;
 }
 
