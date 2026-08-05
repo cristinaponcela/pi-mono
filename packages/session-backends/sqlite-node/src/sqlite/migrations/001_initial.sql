@@ -65,9 +65,6 @@ CREATE TABLE IF NOT EXISTS lanes (
 	PRIMARY KEY (session_id, lane)
 ) WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS idx_lanes_session_leaf ON lanes(session_id, leaf_id);
-CREATE INDEX IF NOT EXISTS idx_lanes_session_open_operation ON lanes(session_id, open_operation_id);
-
 CREATE TABLE IF NOT EXISTS records (
 	session_id TEXT NOT NULL,
 	seq INTEGER NOT NULL,
