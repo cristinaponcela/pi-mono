@@ -83,7 +83,7 @@ Removed file: `packages/agent/test/harness/branch-query.test.ts`.
 | provides identical JSONL query semantics | Covered | J1/J2 JSONL v4 storage/repository tests plus backend conformance cover normal bounded branch queries. |
 | does not decode SQLite branch entries outside query bounds | Covered | Ported to `packages/session-backends/sqlite-node/test/branch-query.test.ts`: `does not decode entries outside bounded branch queries` corrupts an out-of-bounds payload and branch-cache membership, proves bounded reads decode only requested rows, and proves an unbounded read still rejects the broken chain. |
 | validates SQLite entries before filtering and limiting branch results | Covered | Ported to `packages/session-backends/sqlite-node/test/branch-query.test.ts`: `validates entries before branch query filters and limits` proves corrupt in-window entries reject before `type`, `customType`, and `limit` filtering can hide them. |
-| does not validate SQLite ancestors beyond newest-first stop bounds | Uncovered | QA2: bounded-query validation/corruption gap. |
+| does not validate SQLite ancestors beyond newest-first stop bounds | Covered | Ported to `packages/session-backends/sqlite-node/test/branch-query.test.ts`: `does not validate ancestors beyond newest-first stop bounds` proves `stopAtId` and `stopAtType` reads can return a valid suffix while unbounded reads still reject missing-parent and cyclic ancestor corruption. |
 
 ## Compaction helper tests
 

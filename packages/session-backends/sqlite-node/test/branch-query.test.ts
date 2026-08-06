@@ -88,4 +88,56 @@ describe("SQLite branch queries", () => {
 			message: expect.stringContaining(`failed to decode entry ${customId}`),
 		});
 	});
+
+	it("does not validate ancestors beyond newest-first stop bounds", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		const rootId = await session.appendMessage(createUserMessage("root"));
+		const childId = await session.appendMessage(createAssistantMessage("child"));
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db
+				.prepare("UPDATE entries SET parent_id = ? WHERE session_id = ? AND id = ?")
+				.run("missing-parent", "session-1", childId);
+		} finally {
+			await db.close();
+		}
+		expect(
+			(await session.findEntriesOnBranch({ start: childId, stopAtId: childId })).map((entry) => entry.id),
+		).toEqual([childId]);
+		expect(
+			(await session.findEntriesOnBranch({ start: childId, stopAtType: "message" })).map((entry) => entry.id),
+		).toEqual([childId]);
+		await expect(session.findEntriesOnBranch({ start: childId })).rejects.toMatchObject({
+			code: "invalid_entry",
+			message: expect.stringContaining("Entry missing-parent not found"),
+		});
+
+		const cycleDb = await sqlite.open(databasePath);
+		try {
+			await cycleDb
+				.prepare("UPDATE entries SET parent_id = ? WHERE session_id = ? AND id = ?")
+				.run(rootId, "session-1", childId);
+			await cycleDb
+				.prepare("UPDATE entries SET parent_id = ? WHERE session_id = ? AND id = ?")
+				.run(childId, "session-1", rootId);
+		} finally {
+			await cycleDb.close();
+		}
+		expect(
+			(await session.findEntriesOnBranch({ start: childId, stopAtId: childId })).map((entry) => entry.id),
+		).toEqual([childId]);
+		expect(
+			(await session.findEntriesOnBranch({ start: childId, stopAtType: "message" })).map((entry) => entry.id),
+		).toEqual([childId]);
+		await expect(session.findEntriesOnBranch({ start: childId })).rejects.toMatchObject({
+			code: "invalid_entry",
+			message: expect.stringContaining(`Entry ${childId} not found`),
+		});
+	});
 });
