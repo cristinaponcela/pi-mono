@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS records (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_records_session_seq ON records(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_records_session_lane_seq ON records(session_id, lane, seq);
+CREATE INDEX IF NOT EXISTS idx_records_session_type_seq ON records(session_id, type, seq);
+CREATE INDEX IF NOT EXISTS idx_records_session_type_op_kind_seq ON records(session_id, type, op_kind, seq);
 CREATE INDEX IF NOT EXISTS idx_records_session_lane_type_seq ON records(session_id, lane, type, seq);
 CREATE INDEX IF NOT EXISTS idx_records_session_lane_type_op_kind_seq ON records(session_id, lane, type, op_kind, seq);
 CREATE INDEX IF NOT EXISTS idx_records_session_run_id_seq ON records(session_id, run_id, seq);
