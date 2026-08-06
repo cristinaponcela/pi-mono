@@ -26,10 +26,6 @@ import type {
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
-export type SettledAssistantMessage = AssistantMessage & {
-	stopReason: Exclude<AssistantMessage["stopReason"], "pending">;
-};
-
 export interface StreamAssistantConfig extends AgentLoopConfig {
 	/** Explicit parent context for AI-request telemetry. */
 	telemetryContext: TelemetryContext;
@@ -309,7 +305,7 @@ export async function streamAssistant(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
-): Promise<SettledAssistantMessage> {
+): Promise<AssistantMessage> {
 	return startAiSpan(
 		config.telemetryContext,
 		"pi.ai.request",
@@ -332,7 +328,7 @@ async function streamAssistantInSpan(
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 	span: AiTelemetrySpan<"pi.ai.request">,
-): Promise<SettledAssistantMessage> {
+): Promise<AssistantMessage> {
 	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
 	if (config.transformContext) {
@@ -399,7 +395,10 @@ async function streamAssistantInSpan(
 
 			case "done":
 			case "error": {
-				const finalMessage = requireSettledAssistantMessage(await response.result());
+				const finalMessage = await response.result();
+				if (finalMessage.stopReason === "pending") {
+					throw new Error("Provider stream settled with pending assistant message");
+				}
 				finishAiSpan(span, finalMessage, streamChunkCount, timeToFirstChunkMs);
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
@@ -415,7 +414,10 @@ async function streamAssistantInSpan(
 		}
 	}
 
-	const finalMessage = requireSettledAssistantMessage(await response.result());
+	const finalMessage = await response.result();
+	if (finalMessage.stopReason === "pending") {
+		throw new Error("Provider stream settled with pending assistant message");
+	}
 	finishAiSpan(span, finalMessage, streamChunkCount, timeToFirstChunkMs);
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
@@ -427,16 +429,9 @@ async function streamAssistantInSpan(
 	return finalMessage;
 }
 
-function requireSettledAssistantMessage(message: AssistantMessage): SettledAssistantMessage {
-	if (message.stopReason === "pending") {
-		throw new Error("Provider stream settled with pending assistant message");
-	}
-	return message as SettledAssistantMessage;
-}
-
 function finishAiSpan(
 	span: AiTelemetrySpan<"pi.ai.request">,
-	message: SettledAssistantMessage,
+	message: AssistantMessage,
 	streamChunkCount: number,
 	timeToFirstChunkMs: number | undefined,
 ): void {
@@ -465,8 +460,9 @@ function finishAiSpan(
 }
 
 function telemetryStopReason(
-	stopReason: SettledAssistantMessage["stopReason"],
+	stopReason: AssistantMessage["stopReason"],
 ): "stop" | "length" | "tool_use" | "error" | "aborted" | "deferred" {
+	if (stopReason === "pending") throw new Error("Pending assistant messages do not have telemetry stop reasons");
 	return stopReason === "toolUse" ? "tool_use" : stopReason;
 }
 
