@@ -137,7 +137,7 @@ Removed files:
 | rejects a missing active leaf when opened | Uncovered | J3 owns JSONL missing-reference rejection. SQLite equivalent is covered in `repository.test.ts`. |
 | opens, deletes, and forks by metadata (JSONL) | Covered | J2 JSONL repo conformance. |
 | persists header metadata through create, list, and fork | Covered | J0 codec and J2 repository metadata tests. |
-| repository disposal closes its owned storage | Uncovered | QA2 should audit v4 disposal semantics; SQLite has explicit connection lifecycle tests, but memory/JSONL parity is not exhaustively mapped here. |
+| repository disposal closes its owned storage | Covered / Inapplicable | Old in-memory repo disposal is inapplicable because v4 memory/JSONL repos are not disposable and do not own returned session storage lifetimes. SQLite is the only disposable repository because it owns DB/lease resources; active-session closure is covered by `closes active sessions when the repository is disposed`, and DB close behavior is covered by existing SQLite connection lifecycle tests. |
 | owns leaf navigation, labels, names, stats, and branch traversal | Covered | v4 conformance covers lanes, latest facts, labels, statistics, and branch queries. |
 | serializes concurrent appends into one parent chain | Covered | v4 conformance `linearizes concurrent writes across two lanes`; JSONL storage shared-sequence tests. |
 | includes assistant and summary usage in statistics | Covered | v4 conformance `keeps latest-value facts and computes ledger statistics across lanes`, JSONL storage, and SQLite repository statistics tests. |
