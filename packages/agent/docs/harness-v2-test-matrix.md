@@ -128,7 +128,7 @@ Removed files:
 | allows overriding the JSONL concurrency limit | Inapplicable | Old JSONL keyed-operation-queue implementation detail was deleted. |
 | releases JSONL concurrency capacity after an operation fails | Inapplicable | Old JSONL keyed-operation-queue implementation detail was deleted. |
 | serializes appends to the same session | Covered | v4 single-writer/session mutation conformance and JSONL shared-sequence tests. |
-| uses listing as a barrier between accepted session operations | Uncovered | QA2/J3 should audit whether an equivalent v4 repository-listing barrier is required. |
+| uses listing as a barrier between accepted session operations | Inapplicable | The old test covered deleted JSONL `KeyedOperationQueue.enqueueBarrier()` behavior. V4 JSONL intentionally does not retain created/opened storages in the repository and does not serialize repository operations; `harness-v2.md` says callers must await operations with ordering dependencies, so no listing barrier should be restored. The replacement serialization invariant is per opened session storage and is already covered by backend conformance `linearizes concurrent writes across two lanes` plus JSONL-specific `persists concurrent cross-lane writes in shared sequence order`. |
 | waits for every accepted session operation during disposal | Uncovered | QA2/J3 lifecycle gap. |
 | waits for accepted appends before disposal and rejects later writes | Uncovered | QA2/J3 lifecycle gap. |
 | parses once when opened and retains state across appends | Inapplicable | Old JSONL in-memory aggregate implementation detail; v4 correctness is covered by reopen/shared-sequence tests. |
