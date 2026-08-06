@@ -46,7 +46,7 @@ export function readEntryRow(db: SqliteDatabase, sessionId: string, entryId: str
 export function readEntryRows(
 	db: SqliteDatabase,
 	sessionId: string,
-	options: { afterSeq?: number; order?: EntryOrder } = {},
+	options: { afterSeq?: number; order?: EntryOrder; limit?: number } = {},
 ) {
 	const predicates = ["session_id = ?"];
 	const params: unknown[] = [sessionId];
@@ -54,12 +54,14 @@ export function readEntryRows(
 		predicates.push("seq > ?");
 		params.push(options.afterSeq);
 	}
+	const limit = options.limit === undefined ? "" : " LIMIT ?";
+	if (options.limit !== undefined) params.push(options.limit);
 	return db
 		.prepare(
 			`SELECT session_id, seq, id, parent_id, type, timestamp, payload
 			FROM entries
 			WHERE ${predicates.join(" AND ")}
-			ORDER BY seq ${orderedSql(options.order)}`,
+			ORDER BY seq ${orderedSql(options.order)}${limit}`,
 		)
 		.all<EntryRow>(...params);
 }

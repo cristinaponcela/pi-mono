@@ -51,19 +51,25 @@ export function readLatestLabelFacts(db: SqliteDatabase, sessionId: string) {
 		.all<{ key: string; value: string }>(sessionId);
 }
 
-export function readFactRows(db: SqliteDatabase, sessionId: string, options: { afterSeq?: number } = {}) {
+export function readFactRows(
+	db: SqliteDatabase,
+	sessionId: string,
+	options: { afterSeq?: number; limit?: number } = {},
+) {
 	const predicates = ["session_id = ?"];
 	const params: unknown[] = [sessionId];
 	if (options.afterSeq !== undefined) {
 		predicates.push("seq > ?");
 		params.push(options.afterSeq);
 	}
+	const limit = options.limit === undefined ? "" : " LIMIT ?";
+	if (options.limit !== undefined) params.push(options.limit);
 	return db
 		.prepare(
 			`SELECT session_id, seq, kind, key, value
 			FROM facts
 			WHERE ${predicates.join(" AND ")}
-			ORDER BY seq`,
+			ORDER BY seq${limit}`,
 		)
 		.all<FactRow>(...params);
 }

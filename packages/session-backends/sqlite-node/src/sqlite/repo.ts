@@ -571,33 +571,47 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 
 	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
 		const afterSeq = options.afterSeq ?? 0;
-		const entryRows = readEntryRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst" });
-		const recordRows = readRecordRows(this.db, this.metadata.id, { afterSeq });
-		const laneRows = readLaneMoveRows(this.db, this.metadata.id, { afterSeq });
-		const factRows = readFactRows(this.db, this.metadata.id, { afterSeq });
+		const limit = options.limit;
+		const entryRows = readEntryRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst", limit });
+		const recordRows = readRecordRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst", limit });
+		const laneRows = readLaneMoveRows(this.db, this.metadata.id, { afterSeq, limit });
+		const factRows = readFactRows(this.db, this.metadata.id, { afterSeq, limit });
 
-		const log: LogItem[] = [
-			...entryRows.map((row) => ({ kind: "entry" as const, seq: row.seq, entry: decodeEntry(row) })),
-			...recordRows.map((row) => ({ kind: "record" as const, seq: row.seq, record: decodeRecord(row) })),
-			...laneRows.map((row) => ({ kind: "lane" as const, seq: row.seq, lane: row.lane, leafId: row.leaf_id })),
-			...factRows.map((row) => {
-				if (row.kind === "name")
+		const logRows: { seq: number; decode: () => LogItem }[] = [
+			...entryRows.map((row) => ({
+				seq: row.seq,
+				decode: () => ({ kind: "entry" as const, seq: row.seq, entry: decodeEntry(row) }),
+			})),
+			...recordRows.map((row) => ({
+				seq: row.seq,
+				decode: () => ({ kind: "record" as const, seq: row.seq, record: decodeRecord(row) }),
+			})),
+			...laneRows.map((row) => ({
+				seq: row.seq,
+				decode: () => ({ kind: "lane" as const, seq: row.seq, lane: row.lane, leafId: row.leaf_id }),
+			})),
+			...factRows.map((row) => ({
+				seq: row.seq,
+				decode: () => {
+					if (row.kind === "name")
+						return {
+							kind: "fact" as const,
+							seq: row.seq,
+							fact: "name" as const,
+							name: JSON.parse(row.value ?? "null") as string,
+						};
 					return {
 						kind: "fact" as const,
 						seq: row.seq,
-						fact: "name" as const,
-						name: JSON.parse(row.value ?? "null") as string,
+						fact: "label" as const,
+						targetId: row.key ?? "",
+						label: row.value === null ? undefined : (JSON.parse(row.value) as string),
 					};
-				return {
-					kind: "fact" as const,
-					seq: row.seq,
-					fact: "label" as const,
-					targetId: row.key ?? "",
-					label: row.value === null ? undefined : (JSON.parse(row.value) as string),
-				};
-			}),
+				},
+			})),
 		].sort((left, right) => left.seq - right.seq);
-		return options.limit === undefined ? log : log.slice(0, options.limit);
+		const selectedRows = options.limit === undefined ? logRows : logRows.slice(0, options.limit);
+		return selectedRows.map((row) => row.decode());
 	}
 
 	async getName(): Promise<string | undefined> {
