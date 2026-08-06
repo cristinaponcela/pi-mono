@@ -79,7 +79,7 @@ Removed file: `packages/agent/test/harness/branch-query.test.ts`.
 | Removed test | Classification | Coverage / follow-up |
 |---|---|---|
 | provides identical in-memory query semantics | Covered | v4 backend conformance: `supports bounded filtered and cursor-based queries`; memory conformance runner. |
-| rejects corrupt parent chains in array-backed readers | Uncovered | QA2 should port v4 bounded-query corruption validation where still applicable; the old array-backed reader type itself was deleted. |
+| rejects corrupt parent chains in array-backed readers | Covered / Inapplicable | The old array-backed reader type was deleted. The v4 JSONL equivalents are covered by `jsonl.test.ts`: `rejects an imported entry that references a missing parent` covers missing-parent replay, and `rejects a lane-bound entry that does not chain to the lane leaf` covers lane-tail parent chaining. Cycle parity is inapplicable for v4 JSONL replay because entries cannot reference future parents during sequential replay. |
 | provides identical JSONL query semantics | Covered | J1/J2 JSONL v4 storage/repository tests plus backend conformance cover normal bounded branch queries. |
 | does not decode SQLite branch entries outside query bounds | Uncovered | QA2 should decide/port bounded SQLite validation behavior under the v4 SQLite storage layout. |
 | validates SQLite entries before filtering and limiting branch results | Uncovered | QA2: bounded-query validation/corruption gap. |
