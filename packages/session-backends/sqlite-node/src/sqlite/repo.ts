@@ -300,10 +300,15 @@ function decodeRecord(row: { seq: number; timestamp: string; payload: string }):
 	}
 }
 
-function validateCachedBranchRows(rows: readonly CachedBranchEntryRow[], query: BranchBounds): void {
-	if (rows.length === 0) return;
+function validateCachedBranchRows(rows: readonly CachedBranchEntryRow[], query: BranchBounds & EntryQuery): void {
+	if (rows.length === 0 || query.type !== undefined || query.customType !== undefined) return;
 	const path = [...rows].sort((left, right) => left.entry_seq - right.entry_seq);
-	if (query.stopAtId === undefined && query.stopAtType === undefined && path[0]?.parent_id !== null) {
+	const shouldIncludeRoot =
+		query.stopAtId === undefined &&
+		query.stopAtType === undefined &&
+		query.cursor === undefined &&
+		(query.order === "oldestFirst" || query.limit === undefined);
+	if (shouldIncludeRoot && path[0]?.parent_id !== null) {
 		throw new SessionError("invalid_entry", `Entry ${path[0]?.parent_id} not found`);
 	}
 	for (let index = 1; index < path.length; index++) {

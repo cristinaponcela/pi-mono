@@ -18,9 +18,13 @@ export interface CachedBranchEntryRow {
 }
 
 export interface CachedBranchQuery {
+	type?: Entry["type"];
+	customType?: string;
 	stopAtType?: Entry["type"];
 	stopAtId?: string;
+	cursor?: { afterSeq: number };
 	order?: "newestFirst" | "oldestFirst";
+	limit?: number;
 }
 
 export function readCachedBranch(db: SqliteDatabase, sessionId: string, leafId: string) {
@@ -43,7 +47,7 @@ export function queryCachedBranchRows(
 	const boundaryParams: unknown[] = [sessionId, branch.branchId, branch.leafSeq];
 	const stopPredicates: string[] = [];
 	if (query.stopAtType !== undefined) {
-		stopPredicates.push("stop_entry.type = ?");
+		stopPredicates.push("stop.entry_type = ?");
 		boundaryParams.push(query.stopAtType);
 	}
 	if (query.stopAtId !== undefined) {
@@ -55,26 +59,42 @@ export function queryCachedBranchRows(
 		? `WITH boundary AS (
 			SELECT ${oldestFirst ? "MIN" : "MAX"}(stop.entry_seq) AS entry_seq
 			FROM branch_entries AS stop
-			JOIN entries AS stop_entry
-				ON stop_entry.session_id = stop.session_id AND stop_entry.id = stop.entry_id
 			WHERE stop.session_id = ? AND stop.branch_id = ? AND stop.entry_seq <= ?
 				AND (${stopPredicates.join(" OR ")})
 		)`
 		: "";
-	const range = stopPredicates.length
-		? `AND b.entry_seq ${oldestFirst ? "<=" : ">="} COALESCE(
-			(SELECT entry_seq FROM boundary), ${oldestFirst ? branch.leafSeq : 0}
-		)`
-		: "";
+
+	const predicates = ["b.session_id = ?", "b.branch_id = ?", "b.entry_seq <= ?"];
+	const params = [...(stopPredicates.length === 0 ? [] : boundaryParams), sessionId, branch.branchId, branch.leafSeq];
+	if (stopPredicates.length > 0) {
+		predicates.push(
+			`b.entry_seq ${oldestFirst ? "<=" : ">="} COALESCE((SELECT entry_seq FROM boundary), ${
+				oldestFirst ? branch.leafSeq : 0
+			})`,
+		);
+	}
+	if (query.cursor !== undefined) {
+		predicates.push(`b.entry_seq ${oldestFirst ? ">" : "<"} ?`);
+		params.push(query.cursor.afterSeq);
+	}
+	if (query.type !== undefined) {
+		predicates.push("b.entry_type = ?");
+		params.push(query.type);
+	}
+	if (query.customType !== undefined) {
+		predicates.push("b.custom_type = ?");
+		params.push(query.customType);
+	}
+	const limit = query.limit === undefined ? "" : " LIMIT ?";
+	if (query.limit !== undefined) params.push(query.limit);
+
 	const sql = `${boundary}
 		SELECT e.session_id, e.id, e.seq AS entry_seq, e.parent_id, e.type, e.timestamp, e.payload
 		FROM branch_entries AS b
 		JOIN entries AS e ON e.session_id = b.session_id AND e.id = b.entry_id
-		WHERE b.session_id = ? AND b.branch_id = ? AND b.entry_seq <= ?
-			${range}
-		ORDER BY b.entry_seq ${oldestFirst ? "ASC" : "DESC"}`;
+		WHERE ${predicates.join(" AND ")}
+		ORDER BY b.entry_seq ${oldestFirst ? "ASC" : "DESC"}${limit}`;
 
-	const params = [...(stopPredicates.length === 0 ? [] : boundaryParams), sessionId, branch.branchId, branch.leafSeq];
 	return db.prepare(sql).all<CachedBranchEntryRow>(...params);
 }
 
