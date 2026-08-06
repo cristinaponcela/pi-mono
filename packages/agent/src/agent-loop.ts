@@ -31,6 +31,9 @@ export interface StreamAssistantConfig extends AgentLoopConfig {
 	telemetryContext: TelemetryContext;
 }
 
+// Maps AssistantMessage stop reasons to the telemetry schema value set: snake_case and no non-final "pending".
+type AiTelemetryStopReason = "stop" | "length" | "tool_use" | "error" | "aborted" | "deferred";
+
 /**
  * Start an agent loop with a new prompt message.
  * The prompt is added to the context and events are emitted for it.
@@ -459,9 +462,7 @@ function finishAiSpan(
 	}
 }
 
-function telemetryStopReason(
-	stopReason: AssistantMessage["stopReason"],
-): "stop" | "length" | "tool_use" | "error" | "aborted" | "deferred" {
+function telemetryStopReason(stopReason: AssistantMessage["stopReason"]): AiTelemetryStopReason {
 	if (stopReason === "pending") throw new Error("Pending assistant messages do not have telemetry stop reasons");
 	return stopReason === "toolUse" ? "tool_use" : stopReason;
 }
