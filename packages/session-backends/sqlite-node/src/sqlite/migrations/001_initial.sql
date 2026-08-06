@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd);
+CREATE INDEX IF NOT EXISTS idx_sessions_cwd_created_at ON sessions(cwd, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 
 CREATE TABLE IF NOT EXISTS entries (
