@@ -16,10 +16,10 @@ No production or test changes are part of QA1.
 | Area | Removed cases | Status |
 |---|---:|---|
 | Harness runtime and stream behavior | 37 | Mostly uncovered by design while `AgentHarness` is scaffolded; assigned to H/L/I/C/N packages. Scaffold-safe configuration is covered by F0. |
-| Branch query and corruption behavior | 6 | Core query semantics are covered; corruption/bounded-validation gaps are assigned to QA2. |
+| Branch query and corruption behavior | 6 | Core query semantics are covered; bounded SQLite validation gaps were ported by QA2, and remaining JSONL corruption gaps are assigned to J3. |
 | Compaction helper behavior | 2 | Covered by current compaction/context tests. |
 | Memory/SQLite v4 conformance entrypoints | 3 | Ported to `packages/agent/test/harness/session/*` and `packages/session-backends/sqlite-node/test/conformance.test.ts`. |
-| Repository/backend lifecycle and JSONL behavior | 38 | Most covered by v4 conformance or J0–J2; crash/corruption/v3 gaps assigned to J3–J5 or QA2. |
+| Repository/backend lifecycle and JSONL behavior | 38 | Most covered by v4 conformance or J0–J2; QA2 lifecycle/query audits are resolved, with remaining crash/corruption/v3 gaps assigned to J3–J5. |
 | Session aggregate/context behavior | 17 | Covered by v4 conformance plus current context tests. |
 | SQLite search | 1 | Ported to SQLite package search tests; old scanning backend is inapplicable. |
 
@@ -184,7 +184,7 @@ Removed case from `packages/agent/test/harness/sqlite-node.test.ts`.
 
 QA1 does not implement these; they are the named owners for uncovered rows above.
 
-- **QA2**: storage/query gaps from removed tests: bounded-query corruption/validation behavior, repository/session disposal lifecycle, listing/disposal barriers if still required, branch-query retained-tail semantics outside context projection.
+- **QA2**: completed storage/query audit and ports for bounded-query corruption/validation behavior, repository/session disposal lifecycle, listing/disposal barriers, and branch-query retained-tail semantics outside context projection.
 - **J3**: JSONL malformed file, torn-tail, missing-reference, and lifecycle/concurrency edge cases.
 - **J4/J5**: v3 read-only normalization and first-write conversion; include malformed v3/header metadata cases.
 - **I1/I2/I3/I4/L1-L3**: hook/event/mutation/effects/loop primitive coverage required before runtime harness tests can return.
