@@ -29,7 +29,7 @@ export function readLatestFact(db: SqliteDatabase, sessionId: string, kind: stri
 	return db
 		.prepare(
 			`SELECT session_id, seq, kind, key, value
-			FROM facts
+			FROM facts INDEXED BY idx_facts_session_kind_key_seq
 			WHERE session_id = ? AND kind = ? AND key IS ?
 			ORDER BY seq DESC
 			LIMIT 1`,
@@ -40,15 +40,19 @@ export function readLatestFact(db: SqliteDatabase, sessionId: string, kind: stri
 export function readLatestLabelFacts(db: SqliteDatabase, sessionId: string) {
 	return db
 		.prepare(
-			`SELECT key, value FROM (
-				SELECT key, value, ROW_NUMBER() OVER (PARTITION BY key ORDER BY seq DESC) AS rank
-				FROM facts
+			`WITH latest AS (
+				SELECT key, MAX(seq) AS seq
+				FROM facts INDEXED BY idx_facts_session_kind_key_seq
 				WHERE session_id = ? AND kind = 'label'
+				GROUP BY key
 			)
-			WHERE rank = 1 AND value IS NOT NULL
-			ORDER BY key`,
+			SELECT latest.key, f.value
+			FROM latest
+			JOIN facts AS f ON f.session_id = ? AND f.seq = latest.seq
+			WHERE f.value IS NOT NULL
+			ORDER BY latest.key`,
 		)
-		.all<{ key: string; value: string }>(sessionId);
+		.all<{ key: string; value: string }>(sessionId, sessionId);
 }
 
 export function readFactRows(
