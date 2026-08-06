@@ -8,8 +8,8 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { agentLoop, agentLoopContinue } from "../src/agent-loop.ts";
-import { setDefaultStreamFn } from "../src/index.ts";
+import { agentLoop, agentLoopContinue, type StreamAssistantConfig, streamAssistant } from "../src/agent-loop.ts";
+import { InMemoryTelemetryContext, setDefaultStreamFn } from "../src/index.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
@@ -112,6 +112,116 @@ describe("default stream function compatibility", () => {
 		} finally {
 			setDefaultStreamFn(undefined);
 		}
+	});
+});
+
+describe("streamAssistant", () => {
+	it("streams through a logical AI request span without changing message events", async () => {
+		const telemetryContext = new InMemoryTelemetryContext();
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [createUserMessage("Hello")],
+			tools: [],
+		};
+		const config: StreamAssistantConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			telemetryContext,
+		};
+		let providerTelemetryContext: unknown;
+		const finalMessage = createAssistantMessage([{ type: "text", text: "Hi there!" }]);
+		finalMessage.responseModel = "resolved-model";
+		finalMessage.responseId = "response-1";
+		finalMessage.usage = {
+			input: 11,
+			output: 7,
+			cacheRead: 3,
+			cacheWrite: 5,
+			reasoning: 2,
+			totalTokens: 26,
+			cost: { input: 0.1, output: 0.2, cacheRead: 0.03, cacheWrite: 0.05, total: 0.38 },
+		};
+		const streamFn = async (_model: Model<any>, _context: unknown, options: { telemetryContext?: unknown } = {}) => {
+			providerTelemetryContext = options.telemetryContext;
+			const childContext = options.telemetryContext as { startSpan?: (typeof telemetryContext)["startSpan"] };
+			await childContext.startSpan?.({ name: "provider.child" }, () => undefined);
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const partial = createAssistantMessage([{ type: "text", text: "" }]);
+				stream.push({ type: "start", partial });
+				stream.push({
+					type: "text_delta",
+					contentIndex: 0,
+					delta: "Hi there!",
+					partial: finalMessage,
+				});
+				stream.push({ type: "done", reason: "stop", message: finalMessage });
+			});
+			return stream;
+		};
+		const events: AgentEvent[] = [];
+
+		const message = await streamAssistant(
+			context,
+			config,
+			undefined,
+			(event) => {
+				events.push(event);
+			},
+			streamFn,
+		);
+
+		expect(message).toBe(finalMessage);
+		expect(context.messages.at(-1)).toBe(finalMessage);
+		expect(events.map((event) => event.type)).toEqual(["message_start", "message_update", "message_end"]);
+		expect(providerTelemetryContext).not.toBe(telemetryContext);
+		const spans = telemetryContext.getSpans();
+		const aiSpan = spans.find((span) => span.name === "pi.ai.request");
+		const childSpan = spans.find((span) => span.name === "provider.child");
+		expect(childSpan?.parentId).toBe(aiSpan?.id);
+		expect(aiSpan?.attributes).toMatchObject({
+			"pi.ai.operation": "stream",
+			"pi.ai.provider": "openai",
+			"pi.ai.model": "mock",
+			"pi.ai.api": "openai-responses",
+			"pi.ai.streaming": true,
+			"pi.ai.response.model": "resolved-model",
+			"pi.ai.response.id": "response-1",
+			"pi.ai.response.stop_reason": "stop",
+			"pi.ai.usage.input_tokens": 11,
+			"pi.ai.usage.output_tokens": 7,
+			"pi.ai.usage.cache_read_tokens": 3,
+			"pi.ai.usage.cache_write_tokens": 5,
+			"pi.ai.usage.reasoning_tokens": 2,
+			"pi.ai.usage.total_tokens": 26,
+			"pi.ai.usage.cost": 0.38,
+			"pi.ai.stream.chunk_count": 1,
+			"pi.ai.stream.time_to_first_chunk_ms": expect.any(Number),
+		});
+		expect(aiSpan?.status).toEqual({ status: "ok" });
+	});
+
+	it("rejects a provider stream that settles with a pending assistant message", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [createUserMessage("Hello")],
+			tools: [],
+		};
+		const config: StreamAssistantConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			telemetryContext: new InMemoryTelemetryContext(),
+		};
+		const pendingMessage = createAssistantMessage([{ type: "text", text: "not done" }], "pending");
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => stream.push({ type: "done", reason: "stop", message: pendingMessage }));
+			return stream;
+		};
+
+		await expect(streamAssistant(context, config, undefined, () => undefined, streamFn)).rejects.toThrow(
+			"Provider stream settled with pending assistant message",
+		);
 	});
 });
 

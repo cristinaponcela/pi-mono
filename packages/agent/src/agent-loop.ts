@@ -10,6 +10,8 @@ import {
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
+import { NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@earendil-works/pi-telemetry";
+import { type AiTelemetrySpan, startAiSpan } from "./harness/telemetry.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,
@@ -23,6 +25,15 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+export type SettledAssistantMessage = AssistantMessage & {
+	stopReason: Exclude<AssistantMessage["stopReason"], "pending">;
+};
+
+export interface StreamAssistantConfig extends AgentLoopConfig {
+	/** Explicit parent context for AI-request telemetry. */
+	telemetryContext: TelemetryContext;
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -113,7 +124,14 @@ export async function runAgentLoop(
 		await emit({ type: "message_end", message: prompt });
 	}
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
+	await runLoop(
+		currentContext,
+		newMessages,
+		{ ...config, telemetryContext: config.telemetryContext ?? NOOP_TELEMETRY_CONTEXT },
+		signal,
+		emit,
+		streamFn ?? getDefaultStreamFn(),
+	);
 	return newMessages;
 }
 
@@ -138,7 +156,14 @@ export async function runAgentLoopContinue(
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
+	await runLoop(
+		currentContext,
+		newMessages,
+		{ ...config, telemetryContext: config.telemetryContext ?? NOOP_TELEMETRY_CONTEXT },
+		signal,
+		emit,
+		streamFn ?? getDefaultStreamFn(),
+	);
 	return newMessages;
 }
 
@@ -155,7 +180,7 @@ function createAgentStream(): EventStream<AgentEvent, AgentMessage[]> {
 async function runLoop(
 	initialContext: AgentContext,
 	newMessages: AgentMessage[],
-	initialConfig: AgentLoopConfig,
+	initialConfig: StreamAssistantConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
@@ -190,7 +215,7 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
+			const message = await streamAssistant(currentContext, config, signal, emit, streamFunction);
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -278,13 +303,36 @@ async function runLoop(
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
  */
-async function streamAssistantResponse(
+export async function streamAssistant(
 	context: AgentContext,
-	config: AgentLoopConfig,
+	config: StreamAssistantConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
-): Promise<AssistantMessage> {
+): Promise<SettledAssistantMessage> {
+	return startAiSpan(
+		config.telemetryContext,
+		"pi.ai.request",
+		{
+			"pi.ai.operation": "stream",
+			"pi.ai.provider": config.model.provider,
+			"pi.ai.model": config.model.id,
+			"pi.ai.api": config.model.api,
+			"pi.ai.streaming": true,
+			"pi.ai.deferred": config.deferred === undefined ? undefined : Boolean(config.deferred),
+		},
+		async (span) => streamAssistantInSpan(context, config, signal, emit, streamFunction, span),
+	);
+}
+
+async function streamAssistantInSpan(
+	context: AgentContext,
+	config: StreamAssistantConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+	streamFunction: StreamFn,
+	span: AiTelemetrySpan<"pi.ai.request">,
+): Promise<SettledAssistantMessage> {
 	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
 	if (config.transformContext) {
@@ -309,10 +357,14 @@ async function streamAssistantResponse(
 		...config,
 		apiKey: resolvedApiKey,
 		signal,
+		telemetryContext: span,
 	});
 
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
+	let streamChunkCount = 0;
+	let timeToFirstChunkMs: number | undefined;
+	const streamStartedAt = Date.now();
 
 	for await (const event of response) {
 		switch (event.type) {
@@ -332,6 +384,8 @@ async function streamAssistantResponse(
 			case "toolcall_start":
 			case "toolcall_delta":
 			case "toolcall_end":
+				streamChunkCount += 1;
+				timeToFirstChunkMs ??= Date.now() - streamStartedAt;
 				if (partialMessage) {
 					partialMessage = event.partial;
 					context.messages[context.messages.length - 1] = partialMessage;
@@ -345,7 +399,8 @@ async function streamAssistantResponse(
 
 			case "done":
 			case "error": {
-				const finalMessage = await response.result();
+				const finalMessage = requireSettledAssistantMessage(await response.result());
+				finishAiSpan(span, finalMessage, streamChunkCount, timeToFirstChunkMs);
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -360,7 +415,8 @@ async function streamAssistantResponse(
 		}
 	}
 
-	const finalMessage = await response.result();
+	const finalMessage = requireSettledAssistantMessage(await response.result());
+	finishAiSpan(span, finalMessage, streamChunkCount, timeToFirstChunkMs);
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {
@@ -369,6 +425,49 @@ async function streamAssistantResponse(
 	}
 	await emit({ type: "message_end", message: finalMessage });
 	return finalMessage;
+}
+
+function requireSettledAssistantMessage(message: AssistantMessage): SettledAssistantMessage {
+	if (message.stopReason === "pending") {
+		throw new Error("Provider stream settled with pending assistant message");
+	}
+	return message as SettledAssistantMessage;
+}
+
+function finishAiSpan(
+	span: AiTelemetrySpan<"pi.ai.request">,
+	message: SettledAssistantMessage,
+	streamChunkCount: number,
+	timeToFirstChunkMs: number | undefined,
+): void {
+	span.setAttributes({
+		"pi.ai.response.model": message.responseModel ?? message.model,
+		"pi.ai.response.id": message.responseId,
+		"pi.ai.response.stop_reason": telemetryStopReason(message.stopReason),
+		"pi.ai.usage.input_tokens": message.usage.input,
+		"pi.ai.usage.output_tokens": message.usage.output,
+		"pi.ai.usage.cache_read_tokens": message.usage.cacheRead,
+		"pi.ai.usage.cache_write_tokens": message.usage.cacheWrite,
+		"pi.ai.usage.reasoning_tokens": message.usage.reasoning,
+		"pi.ai.usage.total_tokens": message.usage.totalTokens,
+		"pi.ai.usage.cost": message.usage.cost.total,
+		"pi.ai.stream.chunk_count": streamChunkCount,
+		"pi.ai.stream.time_to_first_chunk_ms": timeToFirstChunkMs,
+		"pi.ai.error.type":
+			message.stopReason === "error" || message.stopReason === "aborted" ? message.stopReason : undefined,
+	});
+	if (message.stopReason === "error" || message.stopReason === "aborted") {
+		span.setStatus({
+			status: "error",
+			error: { name: message.stopReason, message: message.errorMessage ?? message.stopReason },
+		});
+	}
+}
+
+function telemetryStopReason(
+	stopReason: SettledAssistantMessage["stopReason"],
+): "stop" | "length" | "tool_use" | "error" | "aborted" | "deferred" {
+	return stopReason === "toolUse" ? "tool_use" : stopReason;
 }
 
 /**
