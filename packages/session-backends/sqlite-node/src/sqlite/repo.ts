@@ -20,6 +20,7 @@ import {
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { appendEntryToBranchCache, buildCachedBranch, deleteBranchCache, rebuildBranchCache } from "./branch-cache.ts";
 import { applyMigrations } from "./migrations.ts";
+import { sql } from "./sql.ts";
 import { type CachedBranchEntryRow, queryCachedBranchRows, readCachedBranch } from "./storage/branch-entries.ts";
 import { readBranchTipIds } from "./storage/branch-tips.ts";
 import {
@@ -169,9 +170,9 @@ function getParentPath(path: string): string {
 }
 
 function configureSqliteDatabase(db: SqliteDatabase): void {
-	db.exec("PRAGMA journal_mode=WAL");
-	db.exec("PRAGMA synchronous=FULL");
-	db.exec("PRAGMA busy_timeout=5000");
+	sql`PRAGMA journal_mode=WAL`.exec(db);
+	sql`PRAGMA synchronous=FULL`.exec(db);
+	sql`PRAGMA busy_timeout=5000`.exec(db);
 }
 
 function timestampToText(timestamp: number): string {

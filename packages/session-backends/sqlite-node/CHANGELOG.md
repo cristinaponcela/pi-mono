@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the composable, parameterized `sql` template tag for SQLite queries.
+
 ## [0.84.0] - 2026-08-06
 
 ### Breaking Changes

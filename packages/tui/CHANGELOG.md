@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed LaTeX relation, multiplication, and named-operator spacing, and correctly composed matrices with stacked fractions, operator limits, and adjacent matrices.
+- Reduced fullscreen mouse event volume under tmux, Zellij, and GNU Screen by using button-motion tracking instead of all-motion tracking.
 
 ## [0.84.0] - 2026-08-06
 

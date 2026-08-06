@@ -1,4 +1,5 @@
 import type { Entry, EntryOrder } from "@earendil-works/pi-agent-core";
+import { sql } from "../sql.ts";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface EntryRow {
@@ -25,22 +26,17 @@ export function entryPayload(entry: Entry): Record<string, unknown> {
 	return payload;
 }
 
-function orderedSql(order: EntryOrder | undefined): string {
-	return order === "oldestFirst" ? "ASC" : "DESC";
-}
-
 export function insertEntryRow(db: SqliteDatabase, sessionId: string, entry: NewEntryRow) {
-	db.prepare(
-		"INSERT INTO entries (session_id, id, seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
-	).run(sessionId, entry.id, entry.seq, entry.parentId, entry.type, entry.timestamp, entry.payload);
+	sql`INSERT INTO entries (session_id, id, seq, parent_id, type, timestamp, payload)
+		VALUES (${sessionId}, ${entry.id}, ${entry.seq}, ${entry.parentId}, ${entry.type}, ${entry.timestamp}, ${entry.payload})`.run(
+		db,
+	);
 }
 
 export function readEntryRow(db: SqliteDatabase, sessionId: string, entryId: string) {
-	return db
-		.prepare(
-			"SELECT session_id, seq, id, parent_id, type, timestamp, payload FROM entries WHERE session_id = ? AND id = ?",
-		)
-		.get<EntryRow>(sessionId, entryId);
+	return sql`SELECT session_id, seq, id, parent_id, type, timestamp, payload
+		FROM entries
+		WHERE session_id = ${sessionId} AND id = ${entryId}`.get<EntryRow>(db);
 }
 
 export function readEntryRows(
@@ -48,30 +44,21 @@ export function readEntryRows(
 	sessionId: string,
 	options: { afterSeq?: number; order?: EntryOrder; limit?: number } = {},
 ) {
-	const predicates = ["session_id = ?"];
-	const params: unknown[] = [sessionId];
-	if (options.afterSeq !== undefined) {
-		predicates.push("seq > ?");
-		params.push(options.afterSeq);
-	}
-	const limit = options.limit === undefined ? "" : " LIMIT ?";
-	if (options.limit !== undefined) params.push(options.limit);
-	return db
-		.prepare(
-			`SELECT session_id, seq, id, parent_id, type, timestamp, payload
-			FROM entries
-			WHERE ${predicates.join(" AND ")}
-			ORDER BY seq ${orderedSql(options.order)}${limit}`,
-		)
-		.all<EntryRow>(...params);
+	const after = options.afterSeq === undefined ? sql`` : sql` AND seq > ${options.afterSeq}`;
+	const direction = options.order === "oldestFirst" ? sql`ASC` : sql`DESC`;
+	const limit = options.limit === undefined ? sql`` : sql` LIMIT ${options.limit}`;
+	return sql`SELECT session_id, seq, id, parent_id, type, timestamp, payload
+		FROM entries
+		WHERE session_id = ${sessionId}${after}
+		ORDER BY seq ${direction}${limit}`.all<EntryRow>(db);
 }
 
 export function idExistsInEntries(db: SqliteDatabase, sessionId: string, id: string) {
-	return !!db
-		.prepare("SELECT 1 AS found FROM entries WHERE session_id = ? AND id = ? LIMIT 1")
-		.get<{ found: number }>(sessionId, id);
+	return !!sql`SELECT 1 AS found FROM entries WHERE session_id = ${sessionId} AND id = ${id} LIMIT 1`.get<{
+		found: number;
+	}>(db);
 }
 
 export function deleteEntryRows(db: SqliteDatabase, sessionId: string) {
-	db.prepare("DELETE FROM entries WHERE session_id = ?").run(sessionId);
+	sql`DELETE FROM entries WHERE session_id = ${sessionId}`.run(db);
 }
