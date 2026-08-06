@@ -172,6 +172,8 @@ describe("streamAssistant", () => {
 		);
 
 		expect(message).toBe(finalMessage);
+		const settledStopReason: Exclude<AssistantMessage["stopReason"], "pending"> = message.stopReason;
+		expect(settledStopReason).toBe("stop");
 		expect(context.messages.at(-1)).toBe(finalMessage);
 		expect(events.map((event) => event.type)).toEqual(["message_start", "message_update", "message_end"]);
 		expect(providerTelemetryContext).not.toBe(telemetryContext);
