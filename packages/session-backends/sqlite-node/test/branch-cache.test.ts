@@ -41,6 +41,52 @@ describe("SQLite branch cache", () => {
 		}
 	});
 
+	it("does not decode entries outside bounded branch queries", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		const rootId = await session.appendMessage(createUserMessage("root"));
+		const middleId = await session.appendMessage(createAssistantMessage("middle"));
+		const leafId = await session.appendMessage(createUserMessage("leaf"));
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db
+				.prepare("UPDATE entries SET payload = ? WHERE session_id = ? AND id = ?")
+				.run("not json", "session-1", middleId);
+			const branch = await db
+				.prepare("SELECT branch_id FROM branch_entries WHERE session_id = ? AND entry_id = ?")
+				.get<{ branch_id: string }>("session-1", leafId);
+			if (!branch) throw new Error("Missing branch cache for bounded SQLite query test");
+			await db
+				.prepare("DELETE FROM branch_entries WHERE session_id = ? AND branch_id = ? AND entry_id = ?")
+				.run("session-1", branch.branch_id, middleId);
+		} finally {
+			await db.close();
+		}
+
+		expect((await session.findEntriesOnBranch({ start: leafId, stopAtId: leafId })).map((entry) => entry.id)).toEqual(
+			[leafId],
+		);
+		expect(
+			(
+				await session.findEntriesOnBranch({
+					start: leafId,
+					stopAtId: rootId,
+					order: "oldestFirst",
+					limit: 1,
+				})
+			).map((entry) => entry.id),
+		).toEqual([rootId]);
+		await expect(session.findEntriesOnBranch({ start: leafId, limit: 2 })).rejects.toMatchObject({
+			code: "invalid_entry",
+			message: expect.stringContaining(`Entry ${middleId} not found`),
+		});
+	});
+
 	it("reads only the compacted branch window from the complete cache", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
