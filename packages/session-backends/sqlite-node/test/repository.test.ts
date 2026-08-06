@@ -188,6 +188,21 @@ END;
 		expect(counts.closes).toBe(1);
 	});
 
+	it("closes active sessions when the repository is disposed", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		await using repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+
+		await repo[Symbol.asyncDispose]();
+
+		await expect(session.appendMessage(createUserMessage("late"))).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining("SQLite session session-1 is closed"),
+		});
+	});
+
 	it("retains one connection for repeated session operations", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");

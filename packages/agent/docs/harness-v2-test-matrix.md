@@ -120,7 +120,7 @@ Removed files:
 | delegates full-session fork selection without opening the source | Inapplicable | Old repository optimization was deleted; v4 fork behavior is covered by conformance. |
 | retains the opened aggregate instead of reloading for scoped reads | Inapplicable | Old aggregate caching detail was deleted with the legacy repository. |
 | builds context from the branch storage without loading complete history | Inapplicable / Covered | Old branch-storage optimization was deleted; v4 context behavior is covered by `session/context.test.ts`. |
-| rejects repository operations and session writes after disposal | Uncovered | QA2 should audit v4 repository/session disposal semantics where still applicable. |
+| rejects repository operations and session writes after disposal | Covered / Inapplicable | The v4 core `SessionRepo` contract has no disposable state, and the in-memory/JSONL repos do not implement permanent disposal. SQLite disposal is resource release rather than repo poisoning; `packages/session-backends/sqlite-node/test/repository.test.ts` covers the remaining applicable behavior in `closes active sessions when the repository is disposed`, proving active session writes reject after repository disposal. |
 | supports lexical ownership with await using | Uncovered | QA2 should cover or mark inapplicable for v4 repo lifecycle. |
 | encodes custom session IDs used in filenames | Covered | J2 JSONL repository lifecycle validates file-safe ids; `jsonl.test.ts` rejects invalid coding-agent filenames. |
 | allows appends to different sessions to run concurrently | Covered | J2/v4 repository conformance and JSONL concurrent write tests cover accepted concurrent writes without the old keyed queue. |
