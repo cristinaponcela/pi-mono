@@ -229,12 +229,12 @@ type OpenAIReasoningTextDetail = OpenAIReasoningDetailBase & {
 
 type OpenAIReasoningDetail = OpenAIReasoningSummaryDetail | OpenAIEncryptedReasoningDetail | OpenAIReasoningTextDetail;
 
-type OpenAICompletionsReasoningField = "reasoning" | "reasoning_content" | "reasoning_text";
+const OPENAI_COMPLETIONS_REASONING_FIELDS = ["reasoning", "reasoning_content", "reasoning_text"] as const;
 
-const OPENAI_COMPLETIONS_REASONING_FIELDS = new Set<string>(["reasoning", "reasoning_content", "reasoning_text"]);
+type OpenAICompletionsReasoningField = (typeof OPENAI_COMPLETIONS_REASONING_FIELDS)[number];
 
 function isOpenAICompletionsReasoningField(field: string): field is OpenAICompletionsReasoningField {
-	return OPENAI_COMPLETIONS_REASONING_FIELDS.has(field);
+	return OPENAI_COMPLETIONS_REASONING_FIELDS.includes(field as OpenAICompletionsReasoningField);
 }
 
 type ChatCompletionAssistantMessageParamWithReasoning = ChatCompletionAssistantMessageParam &
