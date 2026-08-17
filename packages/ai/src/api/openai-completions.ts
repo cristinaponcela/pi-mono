@@ -18,6 +18,7 @@ import type {
 	ChatTemplateKwargValue,
 	Context,
 	ImageContent,
+	JsonValue,
 	Message,
 	Model,
 	OpenAICompletionsCompat,
@@ -127,17 +128,45 @@ function isImageContentBlock(block: { type: string }): block is ImageContent {
 	return block.type === "image";
 }
 
-function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedReasoningDetail {
-	if (typeof detail !== "object" || detail === null) {
+function isReasoningDetailObject(detail: unknown): detail is Record<string, unknown> {
+	return typeof detail === "object" && detail !== null && !Array.isArray(detail);
+}
+
+function hasValidCommonReasoningDetailFields(candidate: Record<string, unknown>): boolean {
+	return (
+		(candidate.id === undefined || candidate.id === null || typeof candidate.id === "string") &&
+		(candidate.format === undefined || typeof candidate.format === "string") &&
+		(candidate.index === undefined || typeof candidate.index === "number")
+	);
+}
+
+function isOpenAIReasoningDetail(detail: unknown): detail is OpenAIReasoningDetail {
+	if (!isReasoningDetailObject(detail) || !hasValidCommonReasoningDetailFields(detail)) {
 		return false;
 	}
-	const candidate = detail as Record<string, unknown>;
+	switch (detail.type) {
+		case "reasoning.summary":
+			return typeof detail.summary === "string";
+		case "reasoning.encrypted":
+			return typeof detail.data === "string";
+		case "reasoning.text":
+			return (
+				typeof detail.text === "string" &&
+				(detail.signature === undefined || detail.signature === null || typeof detail.signature === "string")
+			);
+		default:
+			return false;
+	}
+}
+
+function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedReasoningDetail {
 	return (
-		candidate.type === "reasoning.encrypted" &&
-		typeof candidate.id === "string" &&
-		candidate.id.length > 0 &&
-		typeof candidate.data === "string" &&
-		candidate.data.length > 0
+		isReasoningDetailObject(detail) &&
+		detail.type === "reasoning.encrypted" &&
+		typeof detail.id === "string" &&
+		detail.id.length > 0 &&
+		typeof detail.data === "string" &&
+		detail.data.length > 0
 	);
 }
 
@@ -175,11 +204,43 @@ type KimiToolSystemMessageParam = {
 	tools: OpenAI.Chat.Completions.ChatCompletionTool[];
 };
 
-type OpenAIEncryptedReasoningDetail = {
+type OpenAIReasoningDetailBase = Record<string, JsonValue> & {
+	id?: string | null;
+	format?: string;
+	index?: number;
+};
+
+type OpenAIReasoningSummaryDetail = OpenAIReasoningDetailBase & {
+	type: "reasoning.summary";
+	summary: string;
+};
+
+type OpenAIEncryptedReasoningDetail = OpenAIReasoningDetailBase & {
 	type: "reasoning.encrypted";
 	id: string;
 	data: string;
 };
+
+type OpenAIReasoningTextDetail = OpenAIReasoningDetailBase & {
+	type: "reasoning.text";
+	text: string;
+	signature?: string | null;
+};
+
+type OpenAIReasoningDetail = OpenAIReasoningSummaryDetail | OpenAIEncryptedReasoningDetail | OpenAIReasoningTextDetail;
+
+type OpenAICompletionsReasoningField = "reasoning" | "reasoning_content" | "reasoning_text";
+
+const OPENAI_COMPLETIONS_REASONING_FIELDS = new Set<string>(["reasoning", "reasoning_content", "reasoning_text"]);
+
+function isOpenAICompletionsReasoningField(field: string): field is OpenAICompletionsReasoningField {
+	return OPENAI_COMPLETIONS_REASONING_FIELDS.has(field);
+}
+
+type ChatCompletionAssistantMessageParamWithReasoning = ChatCompletionAssistantMessageParam &
+	Partial<Record<OpenAICompletionsReasoningField, string>> & {
+		reasoning_details?: JsonValue[];
+	};
 
 type ChatCompletionTextPartWithCacheControl = ChatCompletionContentPartText & {
 	cache_control?: OpenAICompatCacheControl;
@@ -553,6 +614,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					const reasoningDetails = (choice.delta as { reasoning_details?: unknown }).reasoning_details;
 					if (Array.isArray(reasoningDetails)) {
 						for (const detail of reasoningDetails) {
+							if (!isOpenAIReasoningDetail(detail)) {
+								continue;
+							}
+							output.reasoningDetails ??= [];
+							// OpenRouter requires reasoning_details to be replayed unmodified and in order.
+							output.reasoningDetails.push(detail);
+
+							// Keep the legacy encrypted tool-call attachment path for compatibility with
+							// sessions that replay encrypted details from toolCall.thoughtSignature.
 							if (isEncryptedReasoningDetail(detail)) {
 								const serializedDetail = JSON.stringify(detail);
 								const matchingToolCall = toolCallBlocksById.get(detail.id);
@@ -1134,7 +1204,7 @@ export function convertMessages(
 			}
 		} else if (msg.role === "assistant") {
 			// Some providers don't accept null content, use empty string instead
-			const assistantMsg: ChatCompletionAssistantMessageParam = {
+			const assistantMsg: ChatCompletionAssistantMessageParamWithReasoning = {
 				role: "assistant",
 				content: compat.requiresAssistantAfterToolResult ? "" : null,
 			};
@@ -1176,8 +1246,8 @@ export function convertMessages(
 					if (model.provider === "opencode-go" && signature === "reasoning") {
 						signature = "reasoning_content";
 					}
-					if (signature && signature.length > 0) {
-						(assistantMsg as any)[signature] = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
+					if (signature && isOpenAICompletionsReasoningField(signature)) {
+						assistantMsg[signature] = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
 					}
 				}
 			} else if (assistantText.length > 0) {
@@ -1188,6 +1258,14 @@ export function convertMessages(
 				// output, producing recursive nesting like [{'type':'text','text':'[{...}]'}].
 				assistantMsg.content = assistantText;
 			}
+
+			const preservedReasoningDetails =
+				msg.provider === model.provider &&
+				msg.api === model.api &&
+				msg.model === model.id &&
+				msg.reasoningDetails?.length
+					? msg.reasoningDetails
+					: undefined;
 
 			const toolCalls = msg.content.filter(isToolCallBlock);
 			if (toolCalls.length > 0) {
@@ -1212,26 +1290,32 @@ export function convertMessages(
 						},
 					};
 				});
-				const reasoningDetails = toolCalls
-					.filter((tc) => tc.thoughtSignature)
-					.map((tc) => {
-						try {
-							return JSON.parse(tc.thoughtSignature!);
-						} catch {
-							return null;
-						}
-					})
-					.filter(Boolean);
-				if (reasoningDetails.length > 0) {
-					(assistantMsg as any).reasoning_details = reasoningDetails;
+				if (!preservedReasoningDetails) {
+					const reasoningDetails = toolCalls
+						.filter((tc) => tc.thoughtSignature)
+						.map((tc): OpenAIReasoningDetail | null => {
+							try {
+								const parsed = JSON.parse(tc.thoughtSignature!) as unknown;
+								return isOpenAIReasoningDetail(parsed) ? parsed : null;
+							} catch {
+								return null;
+							}
+						})
+						.filter((detail): detail is OpenAIReasoningDetail => detail !== null);
+					if (reasoningDetails.length > 0) {
+						assistantMsg.reasoning_details = reasoningDetails;
+					}
 				}
+			}
+			if (preservedReasoningDetails) {
+				assistantMsg.reasoning_details = preservedReasoningDetails;
 			}
 			if (
 				compat.requiresReasoningContentOnAssistantMessages &&
 				model.reasoning &&
-				(assistantMsg as { reasoning_content?: string }).reasoning_content === undefined
+				assistantMsg.reasoning_content === undefined
 			) {
-				(assistantMsg as { reasoning_content?: string }).reasoning_content = "";
+				assistantMsg.reasoning_content = "";
 			}
 			// Skip assistant messages that have no content and no tool calls.
 			// Some providers require "either content or tool_calls, but not none".
