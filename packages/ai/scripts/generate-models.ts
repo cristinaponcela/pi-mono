@@ -744,6 +744,28 @@ function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+function getAnthropicFallbackMetadataModelIds(): Set<string> {
+	return new Set([
+		...Object.keys(ANTHROPIC_ALLOWED_FALLBACK_MODELS),
+		...Object.values(ANTHROPIC_ALLOWED_FALLBACK_MODELS).flat(),
+	]);
+}
+
+function applyAnthropicFallbackCostMetadata(models: readonly Model<"anthropic-messages">[]): void {
+	for (const [modelId, fallbackModelIds] of Object.entries(ANTHROPIC_ALLOWED_FALLBACK_MODELS)) {
+		const model = models.find((candidate) => candidate.id === modelId);
+		if (!model?.compat?.allowedFallbackModels) continue;
+
+		for (const fallbackModelId of fallbackModelIds) {
+			const fallback = model.compat.allowedFallbackModels.find((target) => target.model === fallbackModelId);
+			const fallbackModel = models.find((candidate) => candidate.id === fallbackModelId);
+			if (fallback && fallbackModel) {
+				fallback.cost = fallbackModel.cost;
+			}
+		}
+	}
+}
+
 function applyStrictToolCompatMetadata(model: Model<Api>): void {
 	if (
 		(model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
@@ -964,7 +986,7 @@ function getAnthropicMessagesCompat(provider: string, modelId: string): Anthropi
 	if (provider === "anthropic") {
 		const allowedFallbackModels = ANTHROPIC_ALLOWED_FALLBACK_MODELS[modelId];
 		if (allowedFallbackModels) {
-			compat.allowedFallbackModels = allowedFallbackModels;
+			compat.allowedFallbackModels = allowedFallbackModels.map((fallbackModel) => ({ model: fallbackModel }));
 		}
 	}
 	if (provider === "xiaomi" || provider.startsWith("xiaomi-token-plan-")) {
@@ -2785,6 +2807,15 @@ async function generateModels() {
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
+	const anthropicFallbackMetadataModelIds = getAnthropicFallbackMetadataModelIds();
+	applyAnthropicFallbackCostMetadata(
+		allModels.filter(
+			(model): model is Model<"anthropic-messages"> =>
+				model.provider === "anthropic" &&
+				model.api === "anthropic-messages" &&
+				anthropicFallbackMetadataModelIds.has(model.id),
+		),
+	);
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
