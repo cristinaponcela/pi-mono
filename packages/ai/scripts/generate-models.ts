@@ -744,21 +744,23 @@ function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
 	}
 }
 
-function getAnthropicFallbackMetadataModelIds(): Set<string> {
-	return new Set([
-		...Object.keys(ANTHROPIC_ALLOWED_FALLBACK_MODELS),
-		...Object.values(ANTHROPIC_ALLOWED_FALLBACK_MODELS).flat(),
-	]);
+function isAnthropicFallbackMetadataModel(model: Model<Api>): model is Model<"anthropic-messages"> {
+	if (model.provider !== "anthropic" || model.api !== "anthropic-messages") return false;
+	return (
+		model.id in ANTHROPIC_ALLOWED_FALLBACK_MODELS ||
+		Object.values(ANTHROPIC_ALLOWED_FALLBACK_MODELS).some((fallbackModelIds) => fallbackModelIds.includes(model.id))
+	);
 }
 
 function applyAnthropicFallbackCostMetadata(models: readonly Model<"anthropic-messages">[]): void {
+	const modelsById = new Map(models.map((model) => [model.id, model]));
 	for (const [modelId, fallbackModelIds] of Object.entries(ANTHROPIC_ALLOWED_FALLBACK_MODELS)) {
-		const model = models.find((candidate) => candidate.id === modelId);
+		const model = modelsById.get(modelId);
 		if (!model?.compat?.allowedFallbackModels) continue;
 
 		for (const fallbackModelId of fallbackModelIds) {
 			const fallback = model.compat.allowedFallbackModels.find((target) => target.model === fallbackModelId);
-			const fallbackModel = models.find((candidate) => candidate.id === fallbackModelId);
+			const fallbackModel = modelsById.get(fallbackModelId);
 			if (fallback && fallbackModel) {
 				fallback.cost = fallbackModel.cost;
 			}
@@ -2807,15 +2809,7 @@ async function generateModels() {
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
-	const anthropicFallbackMetadataModelIds = getAnthropicFallbackMetadataModelIds();
-	applyAnthropicFallbackCostMetadata(
-		allModels.filter(
-			(model): model is Model<"anthropic-messages"> =>
-				model.provider === "anthropic" &&
-				model.api === "anthropic-messages" &&
-				anthropicFallbackMetadataModelIds.has(model.id),
-		),
-	);
+	applyAnthropicFallbackCostMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
