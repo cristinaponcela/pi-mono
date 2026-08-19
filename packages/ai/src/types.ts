@@ -304,25 +304,17 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
-export interface AnthropicRefusalFallbackTarget {
-	model: string;
-}
-
 export interface AnthropicAllowedFallbackModel {
 	provider: ProviderId;
 	model: string;
 	cost: ModelCost;
 }
 
-export type AnthropicRefusalFallback = "default" | readonly AnthropicRefusalFallbackTarget[];
-
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
 	/** Provider-neutral tool selection for simple requests. Default: "auto". */
 	toolChoice?: ToolChoice;
 	reasoning?: ThinkingLevel;
-	/** Anthropic server-side fallback for eligible refusal stop reasons. Anthropic providers only. */
-	refusalFallbacks?: AnthropicRefusalFallback;
 	/** Ask a capable provider to return a durable handle and continue the request asynchronously. */
 	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
 	/** Custom token budgets for thinking levels (token-based providers only) */

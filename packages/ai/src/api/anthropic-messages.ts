@@ -10,7 +10,6 @@ import type {
 import { calculateCost } from "../models.ts";
 import type {
 	AnthropicMessagesCompat,
-	AnthropicRefusalFallback,
 	Api,
 	AssistantMessage,
 	CacheRetention,
@@ -170,12 +169,16 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
 type MessageCreateParamsStreamingWithFallbacks = MessageCreateParamsStreaming & {
-	fallbacks?: AnthropicRefusalFallback;
+	fallbacks?: readonly { model: string }[];
 };
 
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): boolean {
+	return (model.compat?.allowedFallbackModels?.length ?? 0) > 0;
+}
 
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
@@ -254,12 +257,6 @@ export interface AnthropicOptions extends StreamOptions {
 	 * Default: true.
 	 */
 	interleavedThinking?: boolean;
-	/**
-	 * Anthropic refusal fallback. When set, the request includes the server-side
-	 * fallback beta and Anthropic retries eligible refusals on the configured
-	 * fallback target before returning a final response.
-	 */
-	refusalFallbacks?: AnthropicRefusalFallback;
 	/**
 	 * Anthropic tool choice behavior. String values map to Anthropic's built-in
 	 * choices; `{ type: "tool", name }` forces a specific tool.
@@ -566,7 +563,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					apiKey,
 					options?.interleavedThinking ?? true,
 					shouldUseFineGrainedToolStreamingBeta(model, context),
-					options?.refusalFallbacks !== undefined,
+					shouldUseServerSideFallbackBeta(model),
 					options?.headers,
 					options?.fetch,
 					copilotDynamicHeaders,
@@ -849,7 +846,6 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	if (!options?.reasoning) {
 		return stream(model, context, {
 			...base,
-			refusalFallbacks: options?.refusalFallbacks,
 			thinkingEnabled: false,
 		} satisfies AnthropicOptions);
 	}
@@ -860,7 +856,6 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		const effort = mapThinkingLevelToEffort(model, options.reasoning);
 		return stream(model, context, {
 			...base,
-			refusalFallbacks: options?.refusalFallbacks,
 			thinkingEnabled: true,
 			effort,
 		} satisfies AnthropicOptions);
@@ -879,7 +874,6 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 
 	return stream(model, context, {
 		...base,
-		refusalFallbacks: options?.refusalFallbacks,
 		maxTokens,
 		thinkingEnabled: true,
 		thinkingBudgetTokens: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
@@ -1123,8 +1117,9 @@ function buildParams(
 		}
 	}
 
-	if (options?.refusalFallbacks !== undefined) {
-		params.fallbacks = options.refusalFallbacks;
+	const allowedFallbackModels = model.compat?.allowedFallbackModels;
+	if (allowedFallbackModels && allowedFallbackModels.length > 0) {
+		params.fallbacks = allowedFallbackModels.map((fallback) => ({ model: fallback.model }));
 	}
 
 	return params;
