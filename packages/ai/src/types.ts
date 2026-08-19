@@ -306,8 +306,12 @@ export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
 export interface AnthropicRefusalFallbackTarget {
 	model: string;
-	/** Local pricing for this fallback target. Stripped before sending the provider request. @internal */
-	cost?: ModelCost;
+}
+
+export interface AnthropicAllowedFallbackModel {
+	provider: ProviderId;
+	model: string;
+	cost: ModelCost;
 }
 
 export type AnthropicRefusalFallback = "default" | readonly AnthropicRefusalFallbackTarget[];
@@ -697,11 +701,12 @@ export interface AnthropicMessagesCompat {
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
 	/**
-	 * Model ids Anthropic accepts in `fallbacks` for server-side refusal fallback.
-	 * When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
-	 * field for models with no permitted fallback targets.
+	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
+	 * with local pricing metadata for returned fallback responses. When absent or
+	 * empty, callers must omit `fallbacks`; Anthropic rejects the field for models
+	 * with no permitted fallback targets.
 	 */
-	allowedFallbackModels?: AnthropicRefusalFallbackTarget[];
+	allowedFallbackModels?: AnthropicAllowedFallbackModel[];
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models

@@ -34,7 +34,9 @@ function getAnthropicSummarizationFallback(model: Model<any>): SimpleStreamOptio
 	const allowedFallbackModels = (model as Model<"anthropic-messages">).compat?.allowedFallbackModels;
 	// Use the primary permitted fallback for now. If future Anthropic models expose
 	// broader fallback behavior, this can become a user/config pick or a full chain.
-	return allowedFallbackModels && allowedFallbackModels.length > 0 ? [allowedFallbackModels[0]] : undefined;
+	return allowedFallbackModels && allowedFallbackModels.length > 0
+		? [{ model: allowedFallbackModels[0].model }]
+		: undefined;
 }
 
 // ============================================================================

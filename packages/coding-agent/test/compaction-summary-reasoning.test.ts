@@ -219,8 +219,8 @@ describe("generateSummary reasoning options", () => {
 			messages,
 			createModel(true, 8192, {
 				allowedFallbackModels: [
-					{ model: "claude-opus-4-8", cost: fallbackCost },
-					{ model: "claude-opus-5", cost: fallbackCost },
+					{ provider: "anthropic", model: "claude-opus-4-8", cost: fallbackCost },
+					{ provider: "anthropic", model: "claude-opus-5", cost: fallbackCost },
 				],
 			}),
 			2000,
@@ -229,7 +229,7 @@ describe("generateSummary reasoning options", () => {
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			refusalFallbacks: [{ model: "claude-opus-4-8", cost: fallbackCost }],
+			refusalFallbacks: [{ model: "claude-opus-4-8" }],
 		});
 	});
 

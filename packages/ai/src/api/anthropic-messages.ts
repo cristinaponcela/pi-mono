@@ -606,10 +606,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					const fallbackCost =
 						output.model === model.id
 							? undefined
-							: ((Array.isArray(options?.refusalFallbacks)
-									? options.refusalFallbacks.find((fallback) => fallback.model === output.model)?.cost
-									: undefined) ??
-								model.compat?.allowedFallbackModels?.find((fallback) => fallback.model === output.model)?.cost);
+							: model.compat?.allowedFallbackModels?.find(
+									(fallback) => fallback.provider === model.provider && fallback.model === output.model,
+								)?.cost;
 					usageModel = fallbackCost ? { ...model, id: output.model, cost: fallbackCost } : model;
 					// Capture initial token usage from message_start event
 					// This ensures we have input token counts even if the stream is aborted early
@@ -1125,10 +1124,7 @@ function buildParams(
 	}
 
 	if (options?.refusalFallbacks !== undefined) {
-		params.fallbacks =
-			options.refusalFallbacks === "default"
-				? "default"
-				: options.refusalFallbacks.map((fallback) => ({ model: fallback.model }));
+		params.fallbacks = options.refusalFallbacks;
 	}
 
 	return params;
