@@ -454,7 +454,7 @@ export class ExtensionRunner {
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
 			this.activeUIPrompt = { kind, title };
-			void this.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
+			this.emitUIPromptEvent({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
 		}
 
 		const finish = () => {
@@ -463,7 +463,7 @@ export class ExtensionRunner {
 
 			const prompt = this.activeUIPrompt ?? { kind, title };
 			this.activeUIPrompt = undefined;
-			void this.emit({
+			this.emitUIPromptEvent({
 				type: "ui_prompt_end",
 				reason: "ui_prompt",
 				kind: prompt.kind,
@@ -477,6 +477,12 @@ export class ExtensionRunner {
 			finish();
 			throw err;
 		}
+	}
+
+	private emitUIPromptEvent(event: Extract<RunnerEmitEvent, { type: "ui_prompt_start" | "ui_prompt_end" }>): void {
+		queueMicrotask(() => {
+			void this.emit(event);
+		});
 	}
 
 	getUIContext(): ExtensionUIContext {
