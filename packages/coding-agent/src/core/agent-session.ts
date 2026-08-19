@@ -54,6 +54,7 @@ import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
+	type CompactionPreparation,
 	type CompactionResult,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
@@ -1789,6 +1790,33 @@ export class AgentSession {
 	// Compaction
 	// =========================================================================
 
+	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
+	private async _runDefaultCompaction(
+		preparation: CompactionPreparation,
+		requestModel: Model<any>,
+		apiKey: string | undefined,
+		headers: Record<string, string> | undefined,
+		customInstructions: string | undefined,
+		signal: AbortSignal,
+		env: Record<string, string> | undefined,
+		reason: "manual" | "threshold" | "overflow",
+	): Promise<CompactionResult> {
+		return compact(
+			preparation,
+			requestModel,
+			apiKey,
+			headers,
+			customInstructions,
+			signal,
+			this.thinkingLevel,
+			this.agent.streamFunction,
+			env,
+			this.settingsManager.getRetrySettings(),
+			this._summarizationRetryCallbacks({ source: "compaction", reason }),
+			undefined, // sessionId
+		);
+	}
+
 	/**
 	 * Manually compact the session context.
 	 *
@@ -1868,19 +1896,15 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Shared default summary generator, also used by automatic compaction.
-				const result = await compact(
+				const result = await this._runDefaultCompaction(
 					preparation,
 					requestModel,
 					apiKey,
 					headers,
 					customInstructions,
 					this._compactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
 					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason: "manual" }),
-					undefined, // sessionId
+					"manual",
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2075,17 +2099,20 @@ export class AgentSession {
 		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
 			const messages = this.agent.state.messages;
 			const estimate = estimateContextTokens(messages);
-			if (estimate.lastUsageIndex === null) return false; // No usage data at all
-			// Verify the usage source is post-compaction. Kept pre-compaction messages
-			// have stale usage reflecting the old (larger) context and would falsely
-			// trigger compaction right after one just finished.
-			const usageMsg = messages[estimate.lastUsageIndex];
-			if (
-				compactionEntry &&
-				usageMsg.role === "assistant" &&
-				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
-			) {
-				return false;
+			// Without provider usage, estimate.tokens is the pure message-size estimate.
+			// Only usage-backed estimates need the stale pre-compaction check.
+			if (estimate.lastUsageIndex !== null) {
+				// Verify the usage source is post-compaction. Kept pre-compaction messages
+				// have stale usage reflecting the old (larger) context and would falsely
+				// trigger compaction right after one just finished.
+				const usageMsg = messages[estimate.lastUsageIndex];
+				if (
+					compactionEntry &&
+					usageMsg.role === "assistant" &&
+					(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
+				) {
+					return false;
+				}
 			}
 			contextTokens = estimate.tokens;
 		} else {
@@ -2181,19 +2208,15 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Shared default summary generator, also used by manual compaction.
-				const compactResult = await compact(
+				const compactResult = await this._runDefaultCompaction(
 					preparation,
 					requestModel,
 					apiKey,
 					headers,
 					undefined,
 					this._autoCompactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
 					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason }),
-					undefined, // sessionId
+					reason,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
